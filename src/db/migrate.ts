@@ -3,7 +3,7 @@ import path from 'path';
 import { pool } from '../config/db';
 
 const runMigrations = async (): Promise<void> => {
-  const migrationsFolder = path.join(__dirname, 'migrations');
+  const migrationsFolder = path.join(process.cwd(), 'src', 'db', 'migrations');
 
   const files = fs
     .readdirSync(migrationsFolder)
