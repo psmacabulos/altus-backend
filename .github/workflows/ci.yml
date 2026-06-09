@@ -37,12 +37,22 @@ jobs:
     needs: [lint, typecheck]
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: akhileshns/heroku-deploy@v3.13.15
-        with:
-          heroku_api_key: ${{secrets.HEROKU_API_KEY}}
-          heroku_app_name: 'moveverse-backend'
-          heroku_email: 'patrick.macabulos@gmail.com'
+      - name: Deploy to Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          HEROKU_APP_NAME: moveverse-backend
+          HEROKU_EMAIL: patrick.macabulos@gmail.com
+        run: |
+          cat > ~/.netrc <<EOF
+          machine api.heroku.com
+            login $HEROKU_EMAIL
+            password $HEROKU_API_KEY
+          machine git.heroku.com
+            login $HEROKU_EMAIL
+            password $HEROKU_API_KEY
+          EOF
+          git remote add heroku https://git.heroku.com/$HEROKU_APP_NAME.git
+          git push heroku main
