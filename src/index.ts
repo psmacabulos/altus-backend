@@ -7,9 +7,7 @@ import { connectDB } from './config/db';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware must be registered before routes.
-// helmet sets security headers, cors allows cross-origin requests from the frontend,
-// express.json parses incoming JSON request bodies into req.body.
+// helmet, cors, and express.json must be registered before routes
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
