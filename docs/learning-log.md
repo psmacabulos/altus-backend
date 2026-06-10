@@ -26,12 +26,12 @@ TypeScript adds types to JavaScript. If a function expects a number and you pass
 
 Controls how TypeScript compiles your code. Key fields:
 
-| Field | What it does |
-|---|---|
-| `target` | Which version of JavaScript to output |
-| `outDir` | Where compiled files go (`dist/`) |
-| `rootDir` | Where your TypeScript source lives (`src/`) |
-| `strict` | Enables strict type checking — always use this |
+| Field             | What it does                                                           |
+| ----------------- | ---------------------------------------------------------------------- |
+| `target`          | Which version of JavaScript to output                                  |
+| `outDir`          | Where compiled files go (`dist/`)                                      |
+| `rootDir`         | Where your TypeScript source lives (`src/`)                            |
+| `strict`          | Enables strict type checking — always use this                         |
 | `types: ["node"]` | Makes Node.js globals available (`__dirname`, `fs`, `path`, `process`) |
 
 **Critical:** Without `"types": ["node"]`, TypeScript does not know about Node.js built-ins and throws errors for `__dirname`, `fs`, etc.
@@ -52,10 +52,10 @@ Scripts are shortcuts for terminal commands. Instead of typing the full command 
 
 ## Lesson 6 — npm install vs npm ci
 
-| Command | When to use |
-|---|---|
-| `npm install` | Adding new packages locally |
-| `npm ci` | CI/CD and Docker — installs exact versions from `package-lock.json`, faster, fails if lock file is out of sync |
+| Command       | When to use                                                                                                    |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
+| `npm install` | Adding new packages locally                                                                                    |
+| `npm ci`      | CI/CD and Docker — installs exact versions from `package-lock.json`, faster, fails if lock file is out of sync |
 
 ---
 
@@ -70,8 +70,8 @@ Express is a framework that sits on top of Node's built-in HTTP module and makes
 Middleware are functions that run between receiving a request and sending a response. They run in the order you register them with `app.use()`.
 
 ```typescript
-app.use(helmet());   // runs first
-app.use(cors());     // runs second
+app.use(helmet()); // runs first
+app.use(cors()); // runs second
 app.use(express.json()); // runs third
 // routes run after
 ```
@@ -106,9 +106,11 @@ A simple endpoint that returns 200 with no logic. Used by deployment platforms, 
 Sensitive values (database credentials, API keys) are never written in source code. They live in a `.env` file which is in `.gitignore` — it never gets committed.
 
 `dotenv` reads `.env` and loads those values into `process.env`. In `index.ts`:
+
 ```typescript
 import 'dotenv/config';
 ```
+
 This must be the first import — before anything that reads `process.env`.
 
 ---
@@ -156,9 +158,9 @@ In `docker-compose.yml`, each container has a name (e.g., `app`, `db`). Containe
 
 ## Lesson 16 — docker compose up --build vs down/up
 
-| Command | When to use |
-|---|---|
-| `docker compose up --build` | Source code changed — rebuilds the image |
+| Command                                       | When to use                                                                      |
+| --------------------------------------------- | -------------------------------------------------------------------------------- |
+| `docker compose up --build`                   | Source code changed — rebuilds the image                                         |
 | `docker compose down && docker compose up -d` | `.env` changed — containers need to restart to pick up new environment variables |
 
 Code changes require a rebuild. Environment variable changes only require a restart.
@@ -167,10 +169,10 @@ Code changes require a rebuild. Environment variable changes only require a rest
 
 ## Lesson 17 — What CI/CD means
 
-| Term | Meaning |
-|---|---|
+| Term                        | Meaning                                                   |
+| --------------------------- | --------------------------------------------------------- |
 | CI (Continuous Integration) | Every push automatically runs checks — lint, build, tests |
-| CD (Continuous Deployment) | Every merge to main automatically deploys to production |
+| CD (Continuous Deployment)  | Every merge to main automatically deploys to production   |
 
 The goal: you never manually deploy. Pushing to `main` IS deploying.
 
@@ -190,7 +192,7 @@ YAML uses indentation (spaces, never tabs) to define structure. Two spaces per l
 
 ```yaml
 jobs:
-  lint:              # job name
+  lint: # job name
     runs-on: ubuntu-latest
     steps:
       - run: npm ci
@@ -203,9 +205,9 @@ jobs:
 
 ```yaml
 on:
-  push:              # triggers on push to any branch
+  push: # triggers on push to any branch
   pull_request:
-    branches: ['main', 'dev']  # triggers on PRs targeting these branches
+    branches: ['main', 'dev'] # triggers on PRs targeting these branches
 ```
 
 The deploy job additionally has `if: github.ref == 'refs/heads/main'` so it only runs when code actually lands on main, not on every push.
@@ -257,13 +259,16 @@ const user = result.rows[0];
 ## Lesson 25 — SQL injection and parameterised queries
 
 Never build SQL by string concatenation:
+
 ```typescript
 // WRONG — SQL injection vulnerability
 pool.query(`SELECT * FROM users WHERE email = '${email}'`);
 ```
+
 An attacker can pass `' OR 1=1 --` as the email and get all users.
 
 Always use placeholders:
+
 ```typescript
 // CORRECT
 pool.query('SELECT * FROM users WHERE email = $1', [email]);
@@ -309,6 +314,7 @@ If you try to insert an exercise difficulty before the exercise exists, the data
 ## Lesson 29 — process.exit(0) vs process.exit(1)
 
 Unix convention for exit codes:
+
 - `process.exit(0)` — success, everything went fine
 - `process.exit(1)` — failure, something went wrong
 
@@ -332,11 +338,11 @@ const files = fs.readdirSync(folder);
 
 ---
 
-## Lesson 31 — __dirname vs process.cwd()
+## Lesson 31 — \_\_dirname vs process.cwd()
 
-| | Points to |
-|---|---|
-| `__dirname` | The directory of the current file |
+|                 | Points to                                                   |
+| --------------- | ----------------------------------------------------------- |
+| `__dirname`     | The directory of the current file                           |
 | `process.cwd()` | The directory where the command was run from (project root) |
 
 When TypeScript compiles to `dist/db/migrate.js`, `__dirname` points to `dist/db/`. SQL migration files live in `src/db/migrations/` — not in dist. Use `process.cwd()` to always start from the project root, where `src/` is always reachable.
@@ -345,10 +351,10 @@ When TypeScript compiles to `dist/db/migrate.js`, `__dirname` points to `dist/db
 
 ## Lesson 32 — ts-node vs node (compiled JS)
 
-| Command | How it runs |
-|---|---|
-| `ts-node src/db/migrate.ts` | Runs TypeScript directly, no compilation step |
-| `node dist/db/migrate.js` | Runs compiled JavaScript — TypeScript must be compiled first |
+| Command                     | How it runs                                                  |
+| --------------------------- | ------------------------------------------------------------ |
+| `ts-node src/db/migrate.ts` | Runs TypeScript directly, no compilation step                |
+| `node dist/db/migrate.js`   | Runs compiled JavaScript — TypeScript must be compiled first |
 
 Heroku prunes devDependencies after building. `ts-node` is a devDependency — it no longer exists in the Heroku slug when the release phase runs. That is why `migrate:prod` and `seed:prod` use `node` on compiled JS, not `ts-node`.
 
@@ -434,7 +440,7 @@ An operation is idempotent if running it multiple times produces the same result
 Passwords are never stored in plain text. bcrypt hashes them one-way — you cannot reverse a hash back to the original password.
 
 ```typescript
-const hash = await bcrypt.hash(password, 10);    // store this
+const hash = await bcrypt.hash(password, 10); // store this
 const match = await bcrypt.compare(input, hash); // true or false at login
 ```
 
@@ -464,6 +470,7 @@ Config Vars are Heroku's equivalent of `.env` — environment variables set in t
 ## Lesson 43 — Heroku release phase
 
 In the Procfile:
+
 ```
 release: npm run migrate:prod
 web: npm start
@@ -476,11 +483,13 @@ web: npm start
 ## Lesson 44 — SSL required for Heroku Postgres
 
 Heroku Postgres only accepts SSL connections. Connecting without SSL results in:
+
 ```
 no pg_hba.conf entry for host "...", no encryption
 ```
 
 Fix in `db.ts`:
+
 ```typescript
 ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 ```
@@ -519,6 +528,31 @@ git cherry-pick dev     # applies the latest commit from dev onto current branch
 ```
 
 Useful for hotfixes: fix on the correct branch, cherry-pick to wherever else it is needed.
+
+---
+
+## Lesson 49 — Empty commit to retrigger deployment
+
+GitHub Actions only fires on a new push. If you need to retrigger a deployment without making a real code change (e.g. after fixing a Config Var in Heroku), use an empty commit:
+
+```
+git commit --allow-empty -m "chore: retrigger deployment"
+git push origin main
+```
+
+`--allow-empty` allows a commit with no staged changes. The push triggers the workflow as normal.
+
+---
+
+## Lesson 50 — SASL error: DB password must be a string
+
+If a pg Pool config receives `undefined` for any field (because a Config Var was not set in Heroku), the connection fails with a cryptic SASL error rather than a clear "missing variable" message.
+
+```
+SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string
+```
+
+This always means an environment variable is missing or empty. Check all five DB Config Vars in the Heroku dashboard: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`.
 
 ---
 

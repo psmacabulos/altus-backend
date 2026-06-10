@@ -1,35 +1,51 @@
-# Errors Encountered
+# MoveVerse Backend — Errors Encountered
 
-A running log of real errors hit during development, what caused them, and how they were fixed.
+A record of real errors hit during development and deployment. Each entry documents the environment, root cause, and resolution — written so the same mistake is never repeated twice.
 
 ---
 
-## 1. TSError: Cannot find module 'fs' / 'path' / '__dirname'
+## Local Development
 
-**When:** Running `npm run migrate` inside Docker.
+---
 
-**Error:**
+### ERR-001 — TypeScript cannot find Node.js globals
+
+**Environment:** Local — Docker container  
+**Command:** `npm run migrate`
+
+**Error**
 ```
 TSError: ⨯ Unable to compile TypeScript:
 src/db/migrate.ts: Cannot find name '__dirname'.
 ```
 
-**Cause:** `tsconfig.json` was missing `"types": ["node"]` in `compilerOptions`. Without it, TypeScript does not know about Node.js built-in globals like `__dirname`, `fs`, and `path`.
+**Root Cause**  
+`tsconfig.json` was missing `"types": ["node"]` in `compilerOptions`. Without it, TypeScript does not recognise Node.js built-in globals including `__dirname`, `fs`, `path`, and `process`.
 
-**Fix:** Added to `tsconfig.json`:
+**Resolution**  
+Added to `tsconfig.json` under `compilerOptions`:
 ```json
 "types": ["node"]
 ```
 
+**Prevention**  
+Always include `"types": ["node"]` when starting a Node.js TypeScript project. It belongs in the initial tsconfig setup, not added later when errors appear.
+
 ---
 
-## 2. Migration script defined but never called
+### ERR-002 — Migration script defined but never called
 
-**When:** Running `npm run migrate` — no output, nothing happened.
+**Environment:** Local — Docker container  
+**Command:** `npm run migrate`
 
-**Cause:** `runMigrations` was defined as a function but never called at the bottom of the file.
+**Error**  
+No output, nothing happened. The script ran and exited silently.
 
-**Fix:** Added the call at the bottom of `migrate.ts`:
+**Root Cause**  
+`runMigrations` was defined as a function but the function call was never added at the bottom of the file.
+
+**Resolution**  
+Added the invocation at the bottom of `migrate.ts`:
 ```typescript
 runMigrations().catch((error) => {
   console.error('Migration failed:', error);
@@ -39,52 +55,68 @@ runMigrations().catch((error) => {
 
 ---
 
-## 3. Seed failed — wrong number of placeholders
+### ERR-003 — Seed failed — wrong number of query placeholders
 
-**When:** Running `npm run seed` inside Docker.
+**Environment:** Local — Docker container  
+**Command:** `npm run seed`
 
-**Error:**
+**Error**
 ```
 error: bind message supplies 4 parameters, but prepared statement "" requires 3
 ```
 
-**Cause:** The INSERT had 4 columns and 4 values but only `$1, $2, $3` as placeholders — missing `$4`.
+**Root Cause**  
+An INSERT statement had 4 columns and 4 values in the array but only `$1, $2, $3` as placeholders — `$4` was missing. The pg library counts placeholders strictly against the values array.
 
-**Fix:** Updated all affected queries to include `$4` in the VALUES clause.
+**Resolution**  
+Updated all affected queries to use `$4` as the fourth placeholder in the VALUES clause.
 
 ---
 
-## 4. Seed failed — ADMIN_EMAIL and ADMIN_PASSWORD not set
+### ERR-004 — Seed failed — environment variables not loaded after .env change
 
-**When:** Running `npm run seed` after adding those variables to `.env`.
+**Environment:** Local — Docker container  
+**Command:** `npm run seed`
 
-**Error:**
+**Error**
 ```
 Seed failed: Error: ADMIN_EMAIL and ADMIN_PASSWORD must be set in .env
 ```
 
-**Cause:** Docker containers load environment variables at startup. Changing `.env` after a container is running has no effect — the container still has the old values.
+**Root Cause**  
+Docker containers load environment variables at startup only. Editing `.env` while a container is running has no effect — the container holds the values it was started with.
 
-**Fix:** Restart the containers to pick up the new `.env` values:
+**Resolution**  
+Restarted the containers to reload the updated `.env`:
 ```
 docker compose down && docker compose up -d
 ```
 
+**Prevention**  
+Code changes → `docker compose up --build`. Environment variable changes → `docker compose down && docker compose up -d`.
+
 ---
 
-## 5. GitHub Actions deploy failed — heroku: not found
+## CI/CD — GitHub Actions
 
-**When:** First deployment to Heroku via GitHub Actions using `akhileshns/heroku-deploy@v3.13.15`.
+---
 
-**Error:**
+### ERR-005 — Deploy failed — Heroku CLI not found on GitHub Actions runner
+
+**Environment:** GitHub Actions — deploy job  
+**Trigger:** Push to `main`
+
+**Error**
 ```
 /bin/sh: 1: heroku: not found
-Error: Error: Command failed: heroku create moveverse-backend
+Error: Command failed: heroku create moveverse-backend
 ```
 
-**Cause:** The `akhileshns/heroku-deploy` action is poorly maintained and fails to install the Heroku CLI on the GitHub Actions runner. It has 60+ open issues and multiple failure reports as of 2026.
+**Root Cause**  
+The `akhileshns/heroku-deploy@v3.13.15` GitHub Action fails to install the Heroku CLI on modern GitHub Actions runners. The action has 60+ open issues and multiple unresolved failure reports as of 2026.
 
-**Fix:** Replaced the action entirely with a direct git push to Heroku using `.netrc` for authentication. No third-party action needed:
+**Resolution**  
+Replaced the third-party action with a direct git push to Heroku's remote, authenticating via `.netrc`:
 ```yaml
 - name: Deploy to Heroku
   env:
@@ -104,42 +136,102 @@ Error: Error: Command failed: heroku create moveverse-backend
     git push heroku main
 ```
 
----
-
-## 7. Heroku release phase failed — SSL required by Heroku Postgres
-
-**When:** Deploy to Heroku — migrations started running then failed on first SQL file.
-
-**Error:**
-```
-Migration failed: error: no pg_hba.conf entry for host "...", user "...", database "...", no encryption
-```
-
-**Cause:** Heroku Postgres requires SSL encrypted connections. The app was connecting without SSL, so the database server rejected the connection outright.
-
-**Fix:** Added an `ssl` option to the Pool config in `src/config/db.ts`, conditionally enabled only in production because the local Docker Postgres does not use SSL:
-```typescript
-ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-```
-`rejectUnauthorized: false` is required because Heroku Postgres uses a self-signed certificate, which Node rejects by default.
+**Prevention**  
+Avoid third-party GitHub Actions for critical deployment steps. A direct `git push` has no external dependency and will not break when an action goes unmaintained.
 
 ---
 
-## 6. Heroku release phase failed — migrations folder not found
+## Production — Heroku
 
-**When:** First successful deploy to Heroku — the release phase (`npm run migrate:prod`) crashed.
+---
 
-**Error:**
+### ERR-006 — Release phase failed — migrations folder not found
+
+**Environment:** Heroku — release phase (`npm run migrate:prod`)  
+**Trigger:** First deployment to Heroku
+
+**Error**
 ```
 Migration failed: Error: ENOENT: no such file or directory, scandir '/app/dist/db/migrations'
 ```
 
-**Cause:** `tsc` only compiles `.ts` files. The `.sql` migration files are never copied to `dist/`. So `dist/db/migrations/` does not exist. The migrate script was using `__dirname` which in the compiled file points to `dist/db/` — not where the SQL files are.
+**Root Cause**  
+`tsc` only compiles `.ts` files. The `.sql` migration files are never copied to `dist/`. At runtime, `__dirname` in the compiled file `dist/db/migrate.js` points to `dist/db/` — where no SQL files exist.
 
-This worked locally because `npm run migrate` uses `ts-node` which runs from the source file, so `__dirname` pointed to `src/db/` where the SQL files exist. On Heroku, `npm run migrate:prod` runs the compiled JS where `__dirname` points to `dist/db/`.
+This error did not appear locally because `npm run migrate` uses `ts-node`, which runs from the source file directly, so `__dirname` pointed to `src/db/` where the SQL files live.
 
-**Fix:** Changed `migrate.ts` to use `process.cwd()` instead of `__dirname`:
+**Resolution**  
+Changed the migrations folder path in `migrate.ts` from `__dirname` to `process.cwd()`:
 ```typescript
 const migrationsFolder = path.join(process.cwd(), 'src', 'db', 'migrations');
 ```
-`process.cwd()` always returns the project root (`/app` on Heroku, local project folder on your machine), from where `src/db/migrations/` is always reachable.
+`process.cwd()` always returns the project root (`/app` on Heroku), from which `src/db/migrations/` is always reachable regardless of where the compiled file lives.
+
+---
+
+### ERR-007 — Release phase failed — database rejecting unencrypted connection
+
+**Environment:** Heroku — release phase  
+**Trigger:** Deploy after ERR-006 was resolved
+
+**Error**
+```
+Migration failed: error: no pg_hba.conf entry for host "...", user "...", database "...", no encryption
+```
+
+**Root Cause**  
+Heroku Postgres requires SSL encrypted connections. The app was connecting without SSL, so the database server rejected the connection.
+
+**Resolution**  
+Added a conditional `ssl` option to the Pool config in `src/config/db.ts`:
+```typescript
+ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+```
+The condition is required — local Docker Postgres does not use SSL. `rejectUnauthorized: false` allows Heroku's self-signed certificate, which Node rejects by default.
+
+---
+
+### ERR-008 — Release phase failed — database password must be a string
+
+**Environment:** Heroku — release phase  
+**Trigger:** Deploy after ERR-007 was resolved
+
+**Error**
+```
+Migration failed: Error: SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string
+```
+
+**Root Cause**  
+`DB_PASSWORD` was not set in Heroku Config Vars. `process.env.DB_PASSWORD` resolved to `undefined`, and the pg library requires a string for the password field.
+
+**Resolution**  
+Set all five database Config Vars in the Heroku dashboard under **Settings → Config Vars**, copied from the Heroku Postgres add-on credentials page:
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
+
+**Prevention**  
+Set all Config Vars before the first deployment. A missing variable produces an unhelpful error message — always verify Config Vars if a connection error appears.
+
+---
+
+### ERR-009 — heroku run command not found on Windows Git Bash
+
+**Environment:** Local — Windows Git Bash (MINGW64)  
+**Command:** `heroku run npm run seed:prod --app moveverse-backend`
+
+**Error**
+```
+/bin/bash: line 1: run: command not found
+```
+
+**Root Cause**  
+On Windows Git Bash, `heroku run npm run seed:prod` is parsed incorrectly — the shell passes `run` as the command instead of `npm run seed:prod`. This is a known compatibility issue between the Heroku CLI and MINGW64.
+
+**Resolution**  
+Bypass `npm run` and call the compiled file directly:
+```
+heroku run node dist/db/seed.js --app moveverse-backend
+```
