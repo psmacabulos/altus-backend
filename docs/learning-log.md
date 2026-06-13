@@ -1347,3 +1347,116 @@ res.status(500).json({ error: 'Something went wrong' });
 **The one rule:** call `res.json()` (or any `res.send*`) **exactly once** per request. Calling it twice throws a "headers already sent" error. This is why error handlers use `return` after sending, and why `try/catch` always ends with one clear path.
 
 Express does not enforce this — TypeScript does not catch it — it's a runtime crash if you get it wrong. The `void` return type on controller functions is your reminder: after sending, there is nothing left to do.
+
+---
+
+## Lesson 86 — What a routes file is and why it exists
+
+**The business reason**
+
+A user on the MoveVerse app taps "Sign Up." The frontend sends `POST /api/v1/auth/register`. Express needs to know: "that URL + that method → call `handleRegister`." The routes file is the map that makes that connection. Without it, the controller functions you wrote exist in memory but are unreachable — like a business that has a phone but is not in the directory.
+
+**What the routes file does**
+
+Exactly one thing: bind a URL path + HTTP method to a controller function.
+
+```typescript
+router.post('/register', handleRegister);
+router.post('/login',    handleLogin);
+```
+
+That is the entire file. No logic, no SQL, no `req`, no `res`.
+
+**Express Router vs the main app**
+
+`Router()` creates a mini Express app. It handles its own set of routes and gets mounted into the main app in `index.ts` at a prefix:
+
+```typescript
+// index.ts
+app.use('/api/v1/auth', authRouter);
+```
+
+The prefix `/api/v1/auth` lives in `index.ts`, not in the routes file. This matters: if the business bumps from v1 to v2, only `index.ts` changes — not every route file.
+
+Final paths the client sees:
+- `POST /api/v1/auth/register` → `handleRegister`
+- `POST /api/v1/auth/login` → `handleLogin`
+
+**What the routes layer must never do**
+
+- Import from models or services
+- Write `req` or `res` — only controllers do that
+- Contain `if` statements, `try/catch`, or any logic
+
+---
+
+## Lesson 87 — Why the URL prefix lives in index.ts, not in the routes file
+
+When you write `router.post('/register', handleRegister)`, you are only defining the **suffix** — the part after whatever prefix the router is mounted at.
+
+The prefix (`/api/v1/auth`) is declared at mount time in `index.ts`:
+
+```typescript
+app.use('/auth', authRouter);
+```
+
+**Why this split?**
+
+Imagine you have five route files: auth, users, workouts, movements, leaderboard. If the business decides everything should be under `/api/v1/`, you change **one line** in `index.ts`:
+
+```typescript
+app.use('/api/v1/auth', authRouter);
+```
+
+Without this split, you would have to open every single routes file and edit the path prefix in each one. The routes file owns the suffix; `index.ts` owns the prefix. Change happens in one place.
+
+---
+
+## Lesson 88 — HTTP methods and what they mean (GET, POST, PUT, DELETE, PATCH)
+
+Each HTTP method carries a meaning about what you are trying to do to a resource. Express exposes each one as a method on `router`:
+
+| Method   | Meaning                          | Example                        |
+| -------- | -------------------------------- | ------------------------------ |
+| `GET`    | Read — fetch existing data       | `GET /users/me` — who am I?    |
+| `POST`   | Create — make something new      | `POST /auth/register` — sign up |
+| `PUT`    | Replace — overwrite a full record | `PUT /users/me` — replace profile |
+| `PATCH`  | Update — change part of a record | `PATCH /users/me` — change username only |
+| `DELETE` | Remove a resource                | `DELETE /workouts/123`         |
+
+**Why register and login are both POST**
+
+Register creates a new user row — `POST` is correct (creating a resource).  
+Login does not create anything permanent, but it does create a session/token, and it sends a password in the body. `GET` requests must never carry sensitive data in the body (some clients ignore it; logs capture URLs). So login is `POST` too — the password travels in the request body, not in the URL.
+
+**The rule of thumb:** if the operation changes state or sends sensitive data → `POST` (or `PUT`/`PATCH`/`DELETE`). If it only reads → `GET`.
+
+---
+
+## Lesson 89 — camelCase vs snake_case in API responses: what production actually uses
+
+**The short answer:** camelCase is the dominant convention for JavaScript/TypeScript APIs, but snake_case is also used by major APIs and is a valid, simpler choice when the frontend team is the same team.
+
+**Why camelCase is common in JS/TS APIs**
+
+JSON was born from JavaScript. JavaScript uses camelCase natively. A React developer writing `user.createdAt` feels natural; `user.created_at` feels like it belongs in a Python or Ruby codebase. Most major JS-ecosystem APIs (Stripe, Google, Shopify) use camelCase in their responses.
+
+**Why snake_case is also legitimate**
+
+GitHub and Twitter/X both use snake_case. PostgreSQL uses snake_case. If the backend stays snake_case end-to-end, there is no transformation layer needed — what comes out of the DB goes straight into the JSON response with no extra code.
+
+**The transformation problem**
+
+If you choose camelCase for the API but snake_case in the DB, you need a transformation step somewhere — either in the service, the controller, or via a library like `humps`. This adds complexity and is another place for bugs to hide.
+
+**MoveVerse decision: snake_case throughout**
+
+- DB columns: snake_case (PostgreSQL convention)
+- API responses: snake_case (matches DB directly — no transformation)
+- API request bodies: snake_case (consistent with responses)
+
+This means no transformation layer is needed anywhere. The DB row goes straight into `res.json()`. The frontend team (same team) knows to expect snake_case.
+
+**When you would reconsider this**
+
+If MoveVerse ever published a public API consumed by third-party developers — most of whom would be JavaScript developers — camelCase would be the better choice. At that point, add a transform at the controller layer (or use an ORM like Prisma that handles it automatically).

@@ -20,6 +20,12 @@ This document defines all HTTP endpoints exposed by the MoveVerse backend, struc
 
 ---
 
+## Naming Convention
+
+All field names in requests and responses use **snake_case** — the same casing the database uses. The database is the source of truth; no transformation is applied between the DB row and the JSON response.
+
+---
+
 ## User Journey
 
 ```
@@ -47,7 +53,7 @@ Profile page
 
 Leaderboard (public)
   └─ GET /leaderboard → top 50 global
-  └─ GET /leaderboard/:exerciseName → top 50 per exercise
+  └─ GET /leaderboard/:exercise_name → top 50 per exercise
   └─ GET /leaderboard/me/rank → own rank (auth required)
 ```
 
@@ -71,10 +77,11 @@ All errors return JSON in this shape:
 
 ```json
 {
-  "error": "Human-readable message",
-  "code": "MACHINE_READABLE_CODE"
+  "error": "Human-readable message"
 }
 ```
+
+The HTTP status code is the machine-readable signal — `409` means conflict, `401` means unauthenticated, `400` means bad input. The `error` string is human-readable context for debugging. A separate `code` field is only needed when multiple different errors share the same HTTP status and the frontend must distinguish between them — MoveVerse does not have that requirement.
 
 | HTTP Status | Meaning |
 |---|---|
@@ -122,17 +129,20 @@ Creates a new account. Returns a JWT immediately — no separate login step need
 **Response — `201 Created`**
 ```json
 {
-  "message": "Account created successfully",
   "token": "<jwt_token>",
   "user": {
     "id": "uuid",
     "username": "player1",
-    "role": "user"
+    "email": "player@example.com",
+    "google_id": null,
+    "role": "user",
+    "created_at": "2025-01-01T00:00:00.000Z",
+    "updated_at": "2025-01-01T00:00:00.000Z"
   }
 }
 ```
 
-**Errors:** `400` invalid or missing fields — `409` email already registered
+**Errors:** `400` invalid or missing fields — `409` email already registered — `409` username already taken
 
 ---
 
@@ -160,7 +170,11 @@ Creates a new account. Returns a JWT immediately — no separate login step need
   "user": {
     "id": "uuid",
     "username": "player1",
-    "role": "user"
+    "email": "player@example.com",
+    "google_id": null,
+    "role": "user",
+    "created_at": "2025-01-01T00:00:00.000Z",
+    "updated_at": "2025-01-01T00:00:00.000Z"
   }
 }
 ```
@@ -177,12 +191,12 @@ The frontend obtains a Google ID token using the Google Sign-In button. It sends
 
 | Field | Type | Required |
 |---|---|---|
-| idToken | string | Yes |
+| id_token | string | Yes |
 
 **Request Example**
 ```json
 {
-  "idToken": "eyJhbGciOiJSUzI1NiIsInR5..."
+  "id_token": "eyJhbGciOiJSUzI1NiIsInR5..."
 }
 ```
 
@@ -193,12 +207,16 @@ The frontend obtains a Google ID token using the Google Sign-In button. It sends
   "user": {
     "id": "uuid",
     "username": "player1",
-    "role": "user"
+    "email": "player@example.com",
+    "google_id": "google-oauth2|123456789",
+    "role": "user",
+    "created_at": "2025-01-01T00:00:00.000Z",
+    "updated_at": "2025-01-01T00:00:00.000Z"
   }
 }
 ```
 
-**Errors:** `400` missing idToken — `401` invalid Google token (verification with Google API failed) — `409` email already registered with email/password — `500` internal server error
+**Errors:** `400` missing id_token — `401` invalid Google token (verification with Google API failed) — `409` email already registered with email/password — `500` internal server error
 
 ---
 
@@ -239,13 +257,13 @@ The frontend stores this list in React state. The `id` from each exercise is use
     "id": "uuid",
     "name": "Squats",
     "description": "Standard squat exercise",
-    "caloriesPerRep": 0.32
+    "calories_per_rep": 0.32
   },
   {
     "id": "uuid",
     "name": "Pushups",
     "description": "Standard push-up exercise",
-    "caloriesPerRep": 0.28
+    "calories_per_rep": 0.28
   }
 ]
 ```
@@ -256,28 +274,28 @@ The frontend stores this list in React state. The `id` from each exercise is use
 
 🔒 Requires valid JWT. Returns all difficulty presets for a specific exercise.
 
-The frontend stores the selected difficulty's `id` as `exerciseDifficultyId` — this UUID is required when posting a completed workout session.
+The frontend stores the selected difficulty's `id` as `exercise_difficulty_id` — this UUID is required when posting a completed workout session.
 
 **Response — `200 OK`**
 ```json
 [
   {
     "id": "uuid",
-    "levelName": "Easy",
-    "targetReps": 5,
-    "scoreMultiplier": 1.0
+    "level_name": "Easy",
+    "target_reps": 5,
+    "score_multiplier": 1.0
   },
   {
     "id": "uuid",
-    "levelName": "Medium",
-    "targetReps": 10,
-    "scoreMultiplier": 1.5
+    "level_name": "Medium",
+    "target_reps": 10,
+    "score_multiplier": 1.5
   },
   {
     "id": "uuid",
-    "levelName": "Hard",
-    "targetReps": 20,
-    "scoreMultiplier": 2.0
+    "level_name": "Hard",
+    "target_reps": 20,
+    "score_multiplier": 2.0
   }
 ]
 ```
@@ -299,24 +317,24 @@ The frontend stores the selected difficulty's `id` as `exerciseDifficultyId` —
 
 🔒 Requires valid JWT. The `user_id` is taken from the JWT — never send it in the request body.
 
-**How score is calculated:** The backend computes `score` as `repsCompleted × scoreMultiplier` from the difficulty preset. The frontend does not calculate or send the score.
+**How score is calculated:** The backend computes `score` as `reps_completed × score_multiplier` from the difficulty preset. The frontend does not calculate or send the score.
 
-**How calories are calculated:** The backend computes `caloriesBurned` as `repsCompleted × caloriesPerRep` from the exercise record.
+**How calories are calculated:** The backend computes `calories_burned` as `reps_completed × calories_per_rep` from the exercise record.
 
 **Request Body**
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| exerciseDifficultyId | UUID | Yes | ID of the selected difficulty preset |
-| repsCompleted | integer | Yes | Number of valid repetitions completed |
-| durationSeconds | integer | Yes | Session duration in seconds |
+| exercise_difficulty_id | UUID | Yes | ID of the selected difficulty preset |
+| reps_completed | integer | Yes | Number of valid repetitions completed |
+| duration_seconds | integer | Yes | Session duration in seconds |
 
 **Request Example**
 ```json
 {
-  "exerciseDifficultyId": "3f7a1b2c-...",
-  "repsCompleted": 15,
-  "durationSeconds": 60
+  "exercise_difficulty_id": "3f7a1b2c-...",
+  "reps_completed": 15,
+  "duration_seconds": 60
 }
 ```
 
@@ -325,8 +343,8 @@ The frontend stores the selected difficulty's `id` as `exerciseDifficultyId` —
 {
   "id": "uuid",
   "score": 630,
-  "caloriesBurned": 13.44,
-  "completedAt": "2025-06-01T10:30:00.000Z"
+  "calories_burned": 13.44,
+  "completed_at": "2025-06-01T10:30:00.000Z"
 }
 ```
 
@@ -347,11 +365,11 @@ The frontend stores the selected difficulty's `id` as `exerciseDifficultyId` —
     "id": "uuid",
     "exercise": "Squats",
     "difficulty": "Medium",
-    "repsCompleted": 15,
+    "reps_completed": 15,
     "score": 630,
-    "durationSeconds": 60,
-    "caloriesBurned": 13.44,
-    "completedAt": "2025-06-01T10:30:00.000Z"
+    "duration_seconds": 60,
+    "calories_burned": 13.44,
+    "completed_at": "2025-06-01T10:30:00.000Z"
   }
 ]
 ```
@@ -362,28 +380,13 @@ The frontend stores the selected difficulty's `id` as `exerciseDifficultyId` —
 
 | Method | Endpoint | Auth Required | Description |
 |---|---|---|---|
-| GET | `/users/:id` | No | Fetch a user's public profile |
 | GET | `/users/me` | Yes 🔒 | Fetch the authenticated user's full profile |
+| GET | `/users/:id` | No | Fetch a user's public profile |
 | PUT | `/users/me` | Yes 🔒 | Update the authenticated user's profile |
 | GET | `/users/me/stats` | Yes 🔒 | Fetch the authenticated user's workout statistics |
 | GET | `/users/me/achievements` | Yes 🔒 | Fetch the authenticated user's unlocked achievements |
 
----
-
-### GET `/users/:id`
-
-Public profile. Safe to display to anyone.
-
-**Response — `200 OK`**
-```json
-{
-  "id": "uuid",
-  "username": "player1",
-  "createdAt": "2025-01-01T00:00:00.000Z"
-}
-```
-
-**Errors:** `404` user not found
+> **Route order note:** `/users/me` must be registered before `/users/:id` in the routes file. Express matches routes top-to-bottom — if `/:id` is first, the word `me` is treated as an id parameter and the `/me` route never runs.
 
 ---
 
@@ -397,11 +400,29 @@ Public profile. Safe to display to anyone.
   "id": "uuid",
   "username": "player1",
   "email": "player@example.com",
+  "google_id": null,
   "role": "user",
-  "createdAt": "2025-01-01T00:00:00.000Z",
-  "updatedAt": "2025-01-01T00:00:00.000Z"
+  "created_at": "2025-01-01T00:00:00.000Z",
+  "updated_at": "2025-01-01T00:00:00.000Z"
 }
 ```
+
+---
+
+### GET `/users/:id`
+
+Public profile. Safe to display to anyone.
+
+**Response — `200 OK`**
+```json
+{
+  "id": "uuid",
+  "username": "player1",
+  "created_at": "2025-01-01T00:00:00.000Z"
+}
+```
+
+**Errors:** `404` user not found
 
 ---
 
@@ -433,11 +454,11 @@ Public profile. Safe to display to anyone.
 **Response — `200 OK`**
 ```json
 {
-  "totalSessions": 42,
-  "totalReps": 1250,
-  "totalCaloriesBurned": 380.50,
-  "bestScore": 980,
-  "mostPlayedExercise": "Squats"
+  "total_sessions": 42,
+  "total_reps": 1250,
+  "total_calories_burned": 380.50,
+  "best_score": 980,
+  "most_played_exercise": "Squats"
 }
 ```
 
@@ -454,8 +475,8 @@ Public profile. Safe to display to anyone.
     "id": "uuid",
     "name": "First Rep",
     "description": "Complete your first workout session",
-    "badgeImage": "https://...",
-    "unlockedAt": "2025-06-01T10:30:00.000Z"
+    "badge_image": "https://...",
+    "unlocked_at": "2025-06-01T10:30:00.000Z"
   }
 ]
 ```
@@ -469,8 +490,10 @@ The leaderboard is public — no login required to view it.
 | Method | Endpoint | Auth Required | Description |
 |---|---|---|---|
 | GET | `/leaderboard` | No | Top 50 scores across all exercises |
-| GET | `/leaderboard/:exerciseName` | No | Top 50 scores for a specific exercise |
 | GET | `/leaderboard/me/rank` | Yes 🔒 | Authenticated user's global ranking |
+| GET | `/leaderboard/:exercise_name` | No | Top 50 scores for a specific exercise |
+
+> **Route order note:** `/leaderboard/me/rank` must be registered before `/leaderboard/:exercise_name`. Same reason as users — specific paths before parameterised paths.
 
 ---
 
@@ -484,27 +507,17 @@ The leaderboard is public — no login required to view it.
     "username": "player1",
     "score": 1250,
     "exercise": "Squats",
-    "completedAt": "2025-06-01T10:30:00.000Z"
+    "completed_at": "2025-06-01T10:30:00.000Z"
   },
   {
     "rank": 2,
     "username": "player2",
     "score": 1180,
     "exercise": "Pushups",
-    "completedAt": "2025-06-01T09:15:00.000Z"
+    "completed_at": "2025-06-01T09:15:00.000Z"
   }
 ]
 ```
-
----
-
-### GET `/leaderboard/:exerciseName`
-
-Filters top 50 by exercise name (e.g. `/leaderboard/Squats`).
-
-**Response — `200 OK`** — same shape as above, filtered to one exercise.
-
-**Errors:** `404` exercise name not recognised
 
 ---
 
@@ -516,7 +529,17 @@ Filters top 50 by exercise name (e.g. `/leaderboard/Squats`).
 ```json
 {
   "rank": 14,
-  "totalPlayers": 203,
-  "bestScore": 630
+  "total_players": 203,
+  "best_score": 630
 }
 ```
+
+---
+
+### GET `/leaderboard/:exercise_name`
+
+Filters top 50 by exercise name (e.g. `/leaderboard/Squats`).
+
+**Response — `200 OK`** — same shape as `/leaderboard`, filtered to one exercise.
+
+**Errors:** `404` exercise name not recognised
