@@ -27,7 +27,7 @@ const createUser = async ({
   const result = await pool.query(
     `INSERT INTO users (username, email, password_hash)
         VALUES ($1, $2, $3)
-        RETURNING  id, username, email, google_id, role, created_at`,
+        RETURNING  id, username, email, google_id, role, created_at, updated_at`,
     [username, email, passwordHash]
   );
   return result.rows[0];
@@ -36,7 +36,7 @@ const createUser = async ({
 // Used by Login Story
 const findByEmail = async (email: string): Promise<User | null> => {
   const result = await pool.query(
-    `SELECT id, username, email, password_hash, google_id, role, created_at
+    `SELECT id, username, email, password_hash, google_id, role, created_at, updated_at
             FROM users WHERE email = $1`,
     [email]
   );
@@ -46,7 +46,7 @@ const findByEmail = async (email: string): Promise<User | null> => {
 // Used by auth middleware
 const findById = async (id: string): Promise<SafeUser | null> => {
   const result = await pool.query(
-    `SELECT id, username, email, google_id, role, created_at
+    `SELECT id, username, email, google_id, role, created_at, updated_at
             FROM users WHERE id = $1`,
     [id]
   );

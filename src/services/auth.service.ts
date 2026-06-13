@@ -67,7 +67,7 @@ const login = async (
 
   const token = generateJWT(user.id);
 
-  const { password_hash, ...safeUser } = user;
+  const { password_hash: _password_hash, ...safeUser } = user;
 
   return { token, user: safeUser };
 };
