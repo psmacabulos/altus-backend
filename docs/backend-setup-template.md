@@ -8,7 +8,7 @@ A reference for setting up a production-ready Node.js + TypeScript + PostgreSQL 
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Runtime | Node.js 22.x | JavaScript runtime |
+| Runtime | Node.js 24.x | JavaScript runtime |
 | Language | TypeScript | Type safety, better tooling |
 | Framework | Express 5 | HTTP server and routing |
 | Database | PostgreSQL | Relational data storage |
@@ -35,6 +35,8 @@ src/
   models/               # Database query functions
   routes/               # Express route definitions
   services/             # Business logic
+  types/
+    express.d.ts        # Express Request type augmentation (req.user)
   index.ts              # App entry point
 docs/                   # Project documentation
 ```
@@ -57,7 +59,7 @@ docs/                   # Project documentation
     "seed:prod": "node dist/db/seed.js"
   },
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
   }
 }
 ```
@@ -211,9 +213,41 @@ Always prefix with a zero-padded number. The migration runner sorts files alphab
 
 ---
 
+## eslint.config.mjs
+
+```javascript
+import tseslint from '@typescript-eslint/eslint-plugin'
+import tsparser from '@typescript-eslint/parser'
+import prettierConfig from 'eslint-config-prettier'
+
+export default [
+  {
+    files: ['src/**/*.ts'],
+    languageOptions: {
+      parser: tsparser,
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      ...tseslint.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': ['error', {
+        varsIgnorePattern: '^_',
+        argsIgnorePattern: '^_',
+      }],
+    },
+  },
+  prettierConfig,
+]
+```
+
+**Why `varsIgnorePattern` and `argsIgnorePattern`:** The `_` prefix is a universal convention for intentionally unused variables (e.g. destructuring to exclude a property: `const { password_hash: _password_hash, ...safeUser } = user`). Without these patterns, ESLint treats `_password_hash` as an error even though discarding it is the entire point.
+
+---
+
 ## Key dependency installation
 
-```
+```bash
 npm install express cors helmet dotenv pg bcryptjs jsonwebtoken
 npm install -D typescript ts-node-dev @types/node @types/express @types/cors @types/pg @types/bcryptjs @types/jsonwebtoken eslint prettier @typescript-eslint/parser @typescript-eslint/eslint-plugin eslint-config-prettier
 ```

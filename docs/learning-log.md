@@ -660,3 +660,1154 @@ Build order: model → service → controller → routes → middleware. Each la
 ## Lesson 56 — Login errors should not leak which field was wrong
 
 Wrong email and wrong password must return the **same** error ("Invalid credentials", 401). If "email not found" and "wrong password" are different messages, an attacker can probe which emails are registered (user enumeration). The service knows the difference; the response must not show it.
+
+---
+
+## Lesson 57 — File naming: user.model.ts (the `<noun>.<layer>.ts` convention)
+
+The pattern is `<noun>.<layer>.ts` — the **what** first, the **which layer** second. The dot has zero technical meaning to Node or TypeScript; only the final `.ts` matters to the compiler. It is purely a readability convention.
+
+Why the suffix exists: the same noun lives at several layers (`user.model.ts`, `user.service.ts`, `user.controller.ts`, `user.routes.ts`). Without the suffix they would all be `user.ts` in different folders — identical in editor tabs, fuzzy-find, and stack traces, where the folder name disappears.
+
+Styles seen in real codebases:
+
+| Style           | Where it comes from                                              |
+| --------------- | ---------------------------------------------------------------- |
+| `user.model.ts` | Angular style guide, NestJS — the TypeScript ecosystem default   |
+| `user_model.ts` | Developers from Python/Ruby, where snake_case filenames are norm |
+| `userModel.ts`  | Older Node/JavaScript projects                                   |
+| `models/user.ts`| Folder carries the role — common in Go, minimalist codebases     |
+
+The rule that actually matters: **consistency beats preference**. One pattern across the whole codebase looks professional; a mix signals nobody is steering. The choice is made once (this project chose dot style in Phase 1) and never debated again.
+
+Naming nuance: the file is `user.model.ts` (singular — it represents the concept of *a user*) while the table is `users` (plural — SQL convention, a table holds many rows). And the service is `auth.service.ts`, not `user.service.ts`, because register/login are auth *operations* performed on user *data* — Phase 11 adds a separate `user.service.ts` for profile operations, and both call the same `user.model.ts`.
+
+---
+
+## Lesson 58 — Generics (`<>`) and the Omit utility type
+
+Angle brackets are **type parameters** — like function arguments, but for types, evaluated at compile time:
+
+```typescript
+Promise<void>          // a Promise that resolves to nothing
+pool.query<User>(...)  // a query whose rows have the shape User
+Omit<User, 'password_hash'>  // built-in "type function": User minus one property
+```
+
+`Omit<User, 'password_hash'>` produces a copy of the `User` type with that property deleted:
+
+```typescript
+type SafeUser = Omit<User, 'password_hash'>;
+// identical to rewriting the whole interface by hand without password_hash
+```
+
+Why `Omit` instead of writing the second interface manually: **one source of truth**. Add a column to `User` and `SafeUser` updates itself; a hand-written copy silently drifts out of sync.
+
+Why a SafeUser type at all: `password_hash` must never appear in an HTTP response. Types don't exist at runtime — the SQL column list is what actually excludes the hash. But declaring `findById(): Promise<SafeUser | null>` puts the **compiler** on guard: any future code that tries to pass the hash through that path becomes a compile error. The type is the guard rail; the SQL is the gate.
+
+**The correct vocabulary (interview-ready):**
+
+| Concept | Correct term |
+| --- | --- |
+| `Omit`, `Pick`, `Partial`, `Required` — prebuilt, no import needed | built-in **utility types** |
+| The `<>` brackets | **generics** |
+| What goes inside the `<>` | **type arguments** |
+| One named part of a type's shape (e.g. `email`) | a **property** (or **key**) |
+| Creating `SafeUser` from `User` | **deriving** a type |
+
+Interview sentence: "`Omit` is a built-in utility type. It's generic — it takes two type arguments: the type to start from and the keys to remove. I used it to derive `SafeUser` from `User` without the `password_hash` property, so the compiler prevents the hash leaking into API responses."
+
+⚠️ Do not confuse **`Omit`** (TypeScript utility type) with **OAuth** (the authorization protocol behind "Sign in with Google", Phase 7b) — completely unrelated despite sounding similar.
+
+---
+
+## Lesson 59 — Why createUser() returns the row (Promise&lt;SafeUser&gt; vs Promise&lt;void&gt;)
+
+The return type of a function follows from one question: **who calls this, and what do they need next?**
+
+`Promise<void>` fits fire-and-forget scripts (`connectDB()`, `runMigrations()`, seeding) — the caller only needs "it finished without throwing."
+
+`createUser()` must return the new row because the caller (`register()` in the service) needs it to finish its own job — and the most important values are **born inside the database** at insert time:
+
+```
+id          UUID DEFAULT gen_random_uuid()   ← Postgres invents this
+role        DEFAULT 'user'                   ← Postgres fills this
+created_at  DEFAULT NOW()                    ← Postgres stamps this
+```
+
+The service sent in username/email/hash, but it cannot sign a JWT without the new `id` — which didn't exist until the INSERT ran. Returning `void` would force a second query (`findByEmail` right after inserting) just to learn what the database already knew. `INSERT ... RETURNING` hands the created row back in the same round trip.
+
+| Function | Caller needs | Return type |
+| --- | --- | --- |
+| `runMigrations()` | just "did it work?" | `Promise<void>` |
+| `createUser()` | generated `id`, `role`, `created_at` | `Promise<SafeUser>` |
+| `findByEmail()` | the row, or "not found" | `Promise<User \| null>` |
+
+`void` is not the default for async functions — it is the special case for when there is genuinely nothing to give back.
+
+---
+
+## Lesson 60 — RETURNING and the shape of result.rows
+
+`RETURNING` bolts onto the end of an `INSERT` (also works on `UPDATE` and `DELETE`): "after the write, give me back the affected rows, with these columns." Without it, an INSERT reports only a row count. It is a **PostgreSQL feature**, not universal SQL — MySQL doesn't have it.
+
+The `pg` library always returns the same shape: `result.rows` is an **array of row objects**, regardless of the query. The difference is how many elements can be in it:
+
+| Query | rows on success | rows[0] |
+| --- | --- | --- |
+| `INSERT ... RETURNING` (one row) | exactly one element | always safe to use directly |
+| `SELECT ... WHERE email = $1` | one element **or empty** | may be `undefined` → use `rows[0] ?? null` |
+
+A failed INSERT (e.g. duplicate email hitting a UNIQUE constraint) does not produce zero rows — it **throws**. That is why `createUser()` can return `rows[0]` directly while the find functions need the `?? null` guard.
+
+---
+
+## Lesson 61 — Where to handle errors: the layer that can do something meaningful
+
+**Principle: catch an error at the layer that has the context to act on it.** A try/catch that just re-throws (or worse, swallows the error and returns null) is noise — or a bug.
+
+For a duplicate email at registration, each layer translates the error into its own language:
+
+```
+model:       no try/catch — let the Postgres error bubble up untouched
+service:     error.code === '23505' (unique_violation) + "I'm in a register flow"
+             → throws a clean business error: "Email already registered"
+controller:  catches the business error → picks the HTTP status: 409 Conflict
+```
+
+The model can't act meaningfully (it doesn't know HTTP, or whether a duplicate even matters to the caller). The service is the first layer with **context** — it knows what a unique violation *means* in this operation.
+
+Practical notes:
+
+- Check `error.code === '23505'`, not the message text — Postgres error codes are stable across versions; messages are not.
+- A pre-check (`findByEmail()` before inserting) gives friendlier UX but does **not** replace handling 23505 — two registrations can race between check and insert. The DB unique constraint is the real guarantee; the pre-check is politeness.
+- Unanticipated errors (DB down) are caught by nobody in particular — they bubble to the global error handler (Phase 13), which logs and returns a generic 500. That safety net is why you don't write try/catch everywhere "just in case."
+
+---
+
+## Lesson 62 — VARCHAR vs TEXT in PostgreSQL
+
+In Postgres they are stored **identically** — same performance, same memory. The only difference: `VARCHAR(n)` adds a **length constraint** (inserting longer data is rejected with an error). `TEXT` accepts any length.
+
+So the design question is never "which is faster?" but **"does a max length make business sense for this data?"**
+
+| Column | Type | Why |
+| --- | --- | --- |
+| `username` | `VARCHAR(50)` | Displayed in UIs/leaderboards — a limit is a business rule |
+| `email` | `VARCHAR(255)` | Emails have a real max (254 per spec); 255 is traditional |
+| `password_hash` | `TEXT` | bcrypt controls the length, not us — a future algorithm change must not break storage |
+| `google_id` | `TEXT` | Google controls the format — never limit data whose format belongs to someone else |
+
+⚠️ Postgres-specific: in MySQL, VARCHAR and TEXT genuinely differ in storage and indexing. Interview phrasing: "In Postgres they perform identically — VARCHAR just adds a length check, so I use VARCHAR(n) where a limit is a business rule and TEXT where I don't control the format."
+
+---
+
+## Lesson 63 — How to know which model functions to create
+
+You don't invent model functions — you **discover** them by walking each user story down the layers. Start from the feature, and each layer demands things from the layer below; model functions are whatever falls out.
+
+Phase 7a walked this way:
+
+```
+"A user registers"  → register() needs:  store the user → createUser()
+                      (duplicate email/username? no lookup needed — the UNIQUE
+                       constraint checks it during the INSERT, see Lesson 65)
+"A user logs in"    → login() needs:     fetch stored hash by email → findByEmail()
+"Protected route"   → middleware needs:  load user by JWT id → findById()
+```
+
+Three stories → exactly three functions. The flows demand precisely those, nothing else. Note: `findByEmail()` belongs to the **login** story, not register — register's duplicate check is done by the database constraint, not by a query.
+
+The discipline half is **YAGNI** ("You Aren't Gonna Need It"): don't scaffold full CRUD (`getAllUsers`, `deleteUser`...) because no current story asks for it — that's untested dead code. The model file grows when new stories arrive: Phase 11's profile stories are what add `updateUsername()` and `getStatsByUser()`.
+
+Name functions after the intent found during the walk — "look up a user by email" → `findByEmail()`, not a generic `getUser(field, value)`. Specific names keep functions simple and their SQL obvious.
+
+---
+
+## Lesson 64 — Two UNIQUE columns: telling apart which one was violated
+
+`users` has two UNIQUE constraints, for different business reasons:
+
+- `email` — the **login identity**: duplicates would make `findByEmail()` ambiguous; login couldn't work
+- `username` — the **public identity**: shown on leaderboards/profiles; duplicates would allow impersonation
+
+Violating either throws the same Postgres code `23505`. To tell them apart, the error object carries a `constraint` property with the violated constraint's auto-generated name (`users_email_key`, `users_username_key`). The service checks that name → "Email already registered" vs "Username already taken."
+
+Error specificity is opposite between the two auth flows, on purpose:
+
+| Flow | Error style | Why |
+| --- | --- | --- |
+| Register | **Specific** ("username taken") | The visitor must know what to change; reveals nothing an attacker couldn't learn by trying to register |
+| Login | **Vague** ("invalid credentials") | Specific errors enable user enumeration (Lesson 56) |
+
+---
+
+## Lesson 65 — The INSERT is the check: why no findByUsername() pre-check
+
+Two ways to detect a duplicate at registration:
+
+- **Design A — ask first:** `SELECT` to see if the username exists, then `INSERT` if not
+- **Design B — just try:** `INSERT` directly; if it's a duplicate, Postgres throws
+
+The key insight: a `UNIQUE` constraint means **Postgres already checks for duplicates on every insert, automatically**. Design A asks the same question twice — and worse, its answer can go stale: two simultaneous registrations for "kath" can *both* pass the pre-check (neither row exists yet), then both insert. That gap is a **race condition**. The constraint never has the gap, because the database serialises the inserts — the second one is refused.
+
+Cinema-seat analogy: phoning to ask "is seat 12 free?" reserves nothing — someone can take it before you book. Just clicking "book" lets the booking system itself be the check.
+
+How the visitor still finds out (the error path):
+
+```
+Model:      INSERT → Postgres throws { code: '23505', constraint: 'users_username_key' }
+Service:    catch → translate to "Username already taken"
+Controller: catch → 409 + JSON error
+Visitor:    sees the message, picks another name
+```
+
+Same user experience as a pre-check — minus one query and one race condition.
+
+Why `findByEmail()` still exists: **not for duplicate-checking** — login (US-02) needs it to fetch the stored hash for `bcrypt.compare()`. No story needs `findByUsername()`, so it isn't written (YAGNI, Lesson 63).
+
+---
+
+## Lesson 66 — Positional parameters vs an input object (DTO)
+
+```typescript
+// Style A — positional
+createUser(username: string, email: string, passwordHash: string)
+
+// Style B — object parameter typed by an interface
+interface CreateUserInput { username: string; email: string; passwordHash: string; }
+createUser(input: CreateUserInput)
+```
+
+The danger with Style A here: **all three params are `string`**, so swapping arguments at the call site — `createUser(email, username, hash)` — compiles without error and creates corrupt data. That is a *positional argument bug*. Style B makes it impossible: every value is labeled at the call site, and misnamed keys are compile errors.
+
+Production rule of thumb: **1–2 params of different types → positional is fine. 3+ params, or two adjacent params of the same type → use an object.** Objects also stay readable as functions grow (Phase 9's `createSession()` will take several values).
+
+Interview term: an interface describing data passed between layers (`CreateUserInput`) is a **DTO — Data Transfer Object**. "I used a DTO-style input object to avoid positional argument bugs since all fields were strings."
+
+---
+
+## Lesson 67 — Reading a parameter: name vs type annotation
+
+Every parameter is `name: Type` — the name is invented by you, the type must exist:
+
+```typescript
+(username: string)            // name "username", type string
+(input: CreateUserInput)      // name "input", type CreateUserInput — same pattern
+```
+
+`input` is not a keyword — it could be `data`, `params`, anything. A type can never stand alone in a parameter list (`createUser(CreateUserInput)` won't compile): types are erased at runtime (Lesson 3), so an actual variable name must hold the value.
+
+Common variant — **destructuring** the object directly in the parameter list:
+
+```typescript
+const createUser = async ({ username, email, passwordHash }: CreateUserInput) => ...
+```
+
+One object argument, properties immediately unpacked as local variables (`username` instead of `input.username`). Callers pass the same single object either way — destructuring only changes life *inside* the function.
+
+---
+
+## Lesson 68 — Where types live: co-location vs a types/ folder
+
+**Co-location principle: put things next to the code that owns them; promote to a shared place only when multiple owners genuinely need them.**
+
+`User`, `SafeUser`, `CreateUserInput` → live in `user.model.ts` and are exported from it. The model is the **source of truth** for row shapes (it mirrors the table), and keeping interface + SQL in one file means a column change edits both in the same view — a separate types folder lets them silently drift. A central `types/index.ts` with hundreds of unrelated types is the same mistake as one giant `utils.ts`.
+
+When `src/types/` IS right:
+
+1. **Truly global shapes** owned by no layer (e.g. a standard `ApiError` used by all controllers + the global error handler)
+2. **Augmenting someone else's types** — e.g. `src/types/express.d.ts`, a declaration file extending Express's `Request` so `req.user` exists. Global by nature; cannot live in a model. (Needed in Phase 7a for the auth middleware.)
+
+Rule of thumb: co-locate by default; moving a type later is cheap (editors update all imports). When in doubt, keep it local.
+
+---
+
+## Lesson 69 — How to verify a model layer without anyone reviewing it
+
+The verification ladder, quickest to production-grade:
+
+1. **Compiler + linter** (`npx tsc --noEmit`, `npm run lint`) — proves the TypeScript is coherent, NOT that queries work. TypeScript trusts your SQL (Lesson 58). "It compiles" ≠ "it works."
+2. **Scratch script** — a temporary `src/db/scratch.ts` (same standalone pattern as seed/migrate): import the model functions, call each one against the **local Docker DB**, `console.log` results, compare against expectations **written down beforehand**. Delete the script after.
+3. **psql — the ground truth** — `docker compose exec db psql ...` then `SELECT` to independently confirm what was actually stored (right columns? role defaulted? hash present?). Code can lie about what it did; the database cannot.
+4. **Automated tests** (Jest/Vitest, CI Level 3) — the scratch checklist written as permanent tests, re-run on every push forever. Level 2 verifies today's code; Level 4 keeps verifying it when you're not watching.
+
+The scratch checklist for user.model.ts — note half are **unhappy paths** (beginners only test success):
+
+- created row has DB-generated `id`, default `role`, timestamps
+- `createUser` / `findById` results contain **no** `password_hash`
+- `findByEmail` result **does** contain it
+- unknown email/id → `null` (not undefined, no crash)
+- duplicate username/email → throws with `code === '23505'`
+
+---
+
+## Lesson 70 — npx: running a tool without a package.json script
+
+Installed packages put their executables in `node_modules/.bin/` — which is not on the PATH, so typing `ts-node` alone fails. `package.json` scripts work because npm adds that folder to the PATH while running them. **`npx` does the same for one-off commands**: it looks in `node_modules/.bin/` first and runs the tool from there.
+
+```
+npx ts-node src/db/scratch.ts
+```
+
+Perfect for temporary invocations that don't deserve a permanent script entry.
+
+Gotcha in a Docker setup: `DB_HOST=db` only resolves **inside the Docker network** (Lesson 15). Run ad-hoc DB scripts inside the app container, like migrations:
+
+```
+docker compose exec app npx ts-node src/db/scratch.ts
+```
+
+Bonus: inside the container, docker-compose has already injected the env vars — no dotenv needed.
+
+---
+
+## Lesson 71 — The life of a JWT
+
+A JWT is just a **string**: three base64 chunks joined by dots — `header.payload.signature`. Base64 is encoding, not encryption — anyone can read the header and payload (try jwt.io). Only the signature is unforgeable.
+
+**Birth** — at login/register: `jwt.sign({ userId }, secret, { expiresIn: '7d' })`
+1. header JSON (`{"alg":"HS256"}`) → base64
+2. payload + auto-added `exp` timestamp → base64
+3. `header.payload` + the **secret** → HMAC-SHA256 → signature
+4. join with dots, return the string
+
+**Travel** — returned as `{ token, user }`; the frontend stores it (where = frontend's concern).
+
+**Working life** — frontend sends `Authorization: Bearer <token>` on every protected request. `jwt.verify(token, secret)` re-computes the signature from the incoming header+payload using the server's secret and compares:
+- match → "I signed this, nothing was altered" → trust the userId inside
+- payload tampered → recomputed signature ≠ attached signature → 401
+- attacker can't forge a matching signature **without the secret** — which never leaves the server. That's the entire security model.
+
+No DB lookup, no session table — the token proves itself (stateless). The middleware's `findById()` is to fetch *fresh user data*, not to validate the token.
+
+**Death** — `jwt.verify` checks `exp`; past it → 401 → log in again. Expiry is the only death (no early revocation — Lesson 52's trade-off), which is why tokens are born with a lifespan.
+
+Nuance: the browser only **carries** the token — the server does all verifying (the browser doesn't have the secret). Client holds, server checks.
+
+---
+
+## Lesson 72 — The jsonwebtoken methods used in this project
+
+```typescript
+import jwt from 'jsonwebtoken';
+```
+
+**`jwt.sign(payload, secret, options)` → string** — creates a token. Used in `generateJWT()` (service).
+
+```typescript
+const token = jwt.sign(
+  { userId: user.id },          // payload — readable by anyone, keep minimal
+  process.env.JWT_SECRET,       // secret — the trust anchor
+  { expiresIn: '7d' }           // options — adds the exp claim ('7d', '1h', 60 = seconds)
+);
+// → "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOiJhYmMt..."
+```
+
+**`jwt.verify(token, secret)` → payload (or throws)** — checks signature + expiry. Used in `requireAuth()` (middleware). This is the only method that proves a token is genuine.
+
+```typescript
+try {
+  const payload = jwt.verify(token, process.env.JWT_SECRET) as { userId: string };
+  // valid → payload.userId is trustworthy
+} catch (error) {
+  // invalid → ALWAYS respond 401. Two failure types if needed:
+  // error instanceof jwt.TokenExpiredError  → token is real but expired
+  // error instanceof jwt.JsonWebTokenError  → malformed/tampered/wrong secret
+}
+```
+
+Note: `verify` **throws** on failure (unlike the model's `null` convention) — so it always sits inside try/catch.
+
+**`jwt.decode(token)` → payload** — reads the payload **WITHOUT checking the signature**. ⚠️ Never use for auth — it trusts anything, including forged tokens. Only legitimate use: debugging/inspecting a token's contents (same as pasting it into jwt.io). If you ever see `decode` in an auth middleware in a code review, that is a critical security bug.
+
+| Method | Checks signature? | On failure | Used in |
+| --- | --- | --- | --- |
+| `sign` | creates it | throws (bad inputs) | auth.service → generateJWT() |
+| `verify` | ✅ yes | **throws** | auth.middleware → requireAuth() |
+| `decode` | ❌ NO | returns null | debugging only — never auth |
+
+---
+
+## Lesson 73 — The Node version lives in three places — keep them in sync
+
+Upgrading Node (e.g. 22 → 24) is not one edit. The version is pinned independently in:
+
+| Where | Controls |
+| --- | --- |
+| `Dockerfile` — `FROM node:24-alpine` | local Docker development |
+| `package.json` — `engines` field | what Heroku installs in production |
+| `.github/workflows/ci.yml` — `node-version` | what CI lints/builds/tests on |
+
+If they drift, CI tests on a different version than production runs — the recipe for "works in CI, breaks in prod" bugs. Update all three in the same commit.
+
+Applying the change locally: a `FROM` line change requires `docker compose up --build` (Lesson 16) and invalidates the **entire layer cache** (every step builds on the base image, Lesson 13) — the rebuild pulls the new image and re-runs `npm ci` from scratch. Slow once; normal. Then verify instead of assuming: `docker compose exec app node --version`.
+
+---
+
+## Lesson 74 — AppError vs plain Error: two families, two audiences
+
+| | Operational (business) errors | Programmer/config errors |
+| --- | --- | --- |
+| Examples | "Email already registered", "Invalid credentials" | `JWT_SECRET is not set`, null bug |
+| Caused by | the user — and the user can fix it | the developer/ops — only they can fix it |
+| Status code | meaningful (409, 401) | only ever 500 |
+| Throw | `AppError(message, statusCode)` | plain `Error` |
+| Message audience | **the end user** (goes into the JSON response) | **the developer** (goes into server logs) |
+
+The mechanism: the controller treats `instanceof AppError` as "**this message is safe to show the user**" and sends it. Plain Errors fall through to the generic path — client sees "Something went wrong", the real message lands in the logs.
+
+Mixing them is harmful: `new AppError('JWT_SECRET is not set', 500)` would leak server internals into HTTP responses — reconnaissance for attackers. The class you throw is a statement about **who the message is addressed to**.
+
+Interview terms: **operational errors** (expected, handled, user-facing) vs **programmer errors** (bugs/misconfig, generic response, logged).
+
+---
+
+## Lesson 75 — process.env is always `string | undefined` (and what belongs in env vars)
+
+TypeScript cannot read `.env` at compile time, so **every** `process.env.X` is typed `string | undefined`. APIs that want a specific type reject it — e.g. jsonwebtoken's `expiresIn` accepts `number | StringValue` (a template-literal type matching `'7d'`, `'1h'`...), so `string | undefined` fails twice: the `undefined` and the "any old string".
+
+Ways to narrow:
+- a runtime check: `if (!secret) throw ...` → type becomes `string` below the check
+- fallback + assertion: `(process.env.JWT_EXPIRES_IN ?? '7d') as jwt.SignOptions['expiresIn']` — `as` is a **type assertion**: "compiler, trust me." Every `as` transfers responsibility from the type system to you; use sparingly.
+
+The better question first: **should this be an env var at all?** Env vars are for secrets (`JWT_SECRET`) and per-environment differences (`DB_HOST`). `'7d'` is neither — it's a design decision, identical everywhere. Constants belong in code: type-checked, reviewed, and impossible to break with a missing config var on deploy day (Lesson 50's bug genre). YAGNI applies to configuration too:
+
+```typescript
+return jwt.sign({ userId }, secret, { expiresIn: '7d' });
+```
+
+---
+
+## Lesson 76 — Same shape ≠ same type: DRY applies to meaning, not shape
+
+`RegisterInput` (service) and `CreateUserInput` (model) share two of three fields — tempting to merge. Don't. The differing field is a different **thing**, not a different name:
+
+```typescript
+interface RegisterInput   { ...; password: string; }      // plain text — radioactive
+interface CreateUserInput { ...; passwordHash: string; }  // safe residue after bcrypt
+```
+
+The boundary between them is the `bcrypt.hash()` line inside `register()` — the two types document where the plain password dies. A shared interface would make "forgot to hash, passed it straight through" look natural; separate types make it at least a visible lie (`passwordHash: input.password`) and keep layers free to evolve apart (RegisterInput gains validation; CreateUserInput gains `googleId` in 7b).
+
+Term: merging types that merely *look* alike is removing **incidental duplication** — a classic over-DRY mistake. Keep a type per meaning, named for its meaning (`CreateUserInput`, not a generic `UserInput`).
+
+---
+
+## Lesson 77 — How to discover an unknown error's shape (no AI needed)
+
+Three research routes, most practical first:
+
+1. **Trigger it and print it.** Cause the error on purpose in a scratch script and `console.log(e)` — the whole object. The pg error prints `severity`, `code`, `detail`, `table`, `constraint`... The error object is its own documentation. This is how most developers actually learn error shapes.
+2. **Read the library's types.** The `pg` driver wraps Postgres errors in a `DatabaseError` class (visible in `node_modules/pg-protocol/dist/messages.d.ts` — F12 / Go to Definition works on dependencies too). Because it's exported, the cast can be replaced with a proper runtime check:
+
+```typescript
+import { DatabaseError } from 'pg';
+
+if (error instanceof DatabaseError && error.code === '23505') {
+  if (error.constraint === 'users_email_key') { ... }
+}
+```
+
+`instanceof` narrows `unknown` safely — no `as` cast needed (better than the EXAMPLES file version).
+
+3. **The official reference for the values.** PostgreSQL manual, appendix "PostgreSQL Error Codes": `23505 unique_violation`, `23503 foreign_key_violation` (coming in Phase 9), `23502 not_null_violation` — all in Class 23, Integrity Constraint Violation.
+
+Why `catch (error: unknown)`: JavaScript can `throw` anything (even a string), so TypeScript types every catch variable `unknown`, forcing a narrowing check before property access. `instanceof` is the narrowing tool of choice.
+
+---
+
+## Lesson 78 — Rest operator in destructuring: collecting what remains
+
+```typescript
+const { password_hash, ...safeMember } = member;
+```
+
+Read as: "pull `password_hash` into its own variable — collect **everything else** into a new object called `safeMember`." The name after `...` is invented by you.
+
+```
+member         → { id, username, email, password_hash, google_id, role, created_at }
+password_hash  → '$2b$10$...'          // extracted, used for nothing, discarded
+safeMember     → { id, username, email, google_id, role, created_at }  // hash gone
+```
+
+This is the **runtime** equivalent of `SafeUser = Omit<User, 'password_hash'>` (Lesson 58) — the hash is never copied across, not just hidden by a type. Used in `login()` because `findByEmail()` must return the hash (bcrypt.compare needs it), but the hash must not leave the service after that check.
+
+Same `...` syntax, two directions:
+- **rest** — collects what remains after destructuring: `const { a, ...rest } = obj`
+- **spread** — expands into something: `const newObj = { ...obj, extraKey: value }`
+
+---
+
+## Lesson 79 — Shorthand vs explicit object properties: key name matters
+
+```typescript
+const safeUser = { ... };
+
+return { token, safeUser };        // shorthand → { token: token, safeUser: safeUser }
+return { token, user: safeUser };  // explicit  → { token: token, user: safeUser }
+```
+
+Shorthand `{ x }` locks the key name to the variable name. When the variable name and the required key name differ, use explicit `{ keyName: variableName }`.
+
+TypeScript enforces the declared return type shape — `Promise<{ token: string; user: SafeUser }>` means the key must be literally `user`. Returning `{ safeUser }` creates a `safeUser` key, not a `user` key → type error. The data is there, just under the wrong name, which would break every caller that writes `result.user` at runtime.
+
+---
+
+## Lesson 80 — Semicolons vs commas inside `{}`: type vs value
+
+Same `{}` symbol, two completely different things with their own separator rules:
+
+```typescript
+// TYPE definition (TypeScript only — erased at compile time) → semicolons
+Promise<{ token: string; user: SafeUser }>
+
+// OBJECT LITERAL (JavaScript value — exists at runtime) → commas
+return { token, user: safeUser }
+```
+
+| What it is | World | Separator |
+| --- | --- | --- |
+| Type / interface definition | TypeScript (compile time only) | `;` semicolon |
+| Object literal (a real value) | JavaScript (runtime) | `,` comma |
+
+An inline type like `{ token: string; user: SafeUser }` is just an anonymous interface — TypeScript's type syntax, same rules as a named `interface {}` block. Seeing semicolons inside `{}` means "I'm describing a shape." Seeing commas means "I'm building a real object."
+
+---
+
+## Lesson 81 — res.json() and how data flows from model to browser
+
+`res.status(201).json(result)` does three things: sets `Content-Type: application/json`, calls `JSON.stringify()` on the argument, and sends it as the HTTP response body. Whatever JS object you pass in is exactly what the frontend receives as JSON.
+
+The data shape is decided at the **model** (which columns RETURNING/SELECT lists) and flows upward unchanged:
+
+```
+PostgreSQL row  →  model returns SafeUser
+                →  service wraps it: { token, user: SafeUser }
+                →  controller: res.json(result)
+                →  browser receives: { "token": "...", "user": { ... } }
+```
+
+The controller is a **thin pass-through** — it does not reshape, filter, or make decisions about data. If you find yourself transforming data inside a controller, that logic belongs in the service.
+
+The controller's only real decisions:
+
+| Situation | Status | Why |
+| --- | --- | --- |
+| Register success | `201 Created` | a new resource was created |
+| Login success | `200 OK` | no new resource — just authentication |
+| AppError thrown | `error.statusCode` | service already decided (409, 401...) |
+| Unknown error | `500` | something broke unexpectedly |
+
+`200` vs `201` is the one place the controller actually thinks. Everything else is mechanical pass-through or error translation.
+
+---
+
+## Lesson 82 — res.status() vs res.statusCode
+
+Both set the HTTP status code — the difference is chaining:
+
+```typescript
+res.status(201).json(result)   // Express method — returns res, enables chaining
+res.statusCode = 201;          // Node.js property — assignment, no chaining, two lines
+res.json(result);
+```
+
+`res.status()` is an Express convenience method that sets the code and returns `res` so `.json()` can be called immediately. `res.statusCode` is the raw Node.js `http.ServerResponse` property Express inherits — it works but feels below the Express layer.
+
+Both produce identical HTTP responses. Use `res.status()` — it's the universal Express convention and chains cleanly. `res.statusCode` is the right answer only if you're writing raw Node.js without Express.
+
+---
+
+## Lesson 83 — The anatomy of an HTTP request (what the frontend sends)
+
+Every HTTP request is a structured package with five parts. Express unpacks each one into a named property on `req`:
+
+```
+POST /api/v1/auth/register HTTP/1.1
+Host: localhost:3000
+Content-Type: application/json
+Authorization: Bearer eyJhbGc...
+
+{ "username": "kath", "email": "kath@x.com", "password": "secret123" }
+```
+
+**1. Method** — the intent of the request. Express routes filter on this first.
+
+| Method | Meaning | Example |
+| --- | --- | --- |
+| `GET` | Read data, no body | fetch exercises list |
+| `POST` | Create something, has a body | register, login, save workout |
+| `PUT` | Replace something fully, has a body | update profile |
+| `PATCH` | Partially update, has a body | change just the username |
+| `DELETE` | Remove something | delete account |
+
+**2. URL / path** — where the request is going. Breaks into two sub-parts Express separates for you:
+
+```
+/api/v1/users/abc-123?sort=desc
+         └─────────┘ └────────┘
+         req.params  req.query
+```
+
+- `req.params` — named segments declared in the route definition (`:id`): `router.get('/users/:id')` → `req.params.id === 'abc-123'`
+- `req.query` — everything after the `?` as key/value pairs: `req.query.sort === 'desc'`
+
+**3. Headers** — metadata about the request, not the data itself. Accessed via `req.headers`:
+
+| Header | What it carries | Where you'll use it |
+| --- | --- | --- |
+| `Content-Type: application/json` | "my body is JSON" | `express.json()` middleware reads this to decide whether to parse |
+| `Authorization: Bearer <token>` | the JWT | `requireAuth` middleware reads `req.headers.authorization` |
+| `Host` | which domain was requested | rarely touched in app code |
+
+The `Authorization` header is the one you'll access most:
+```typescript
+const authHeader = req.headers.authorization;
+// "Bearer eyJhbGciOiJIUzI1NiJ9..."
+const token = authHeader?.split(' ')[1];
+// "eyJhbGciOiJIUzI1NiJ9..."
+```
+
+**4. Body** — the data payload. Only present on POST/PUT/PATCH. Accessed via `req.body`.
+
+Without `express.json()` middleware, `req.body` is `undefined` — the middleware reads the raw bytes, parses them as JSON, and puts the result on `req.body`. This is why middleware order matters (Lesson 8): `express.json()` must run before any route that reads `req.body`.
+
+```typescript
+const { username, email, password } = req.body;
+```
+
+Always destructure explicitly — never pass `req.body` directly into a service (Lesson 81).
+
+**5. req.user** — not part of the HTTP standard. This is a custom property your `requireAuth` middleware *attaches* after verifying the JWT. Downstream route handlers read it as if it arrived with the request. This is the mechanism that makes "who is asking?" available everywhere on protected routes.
+
+---
+
+## Lesson 84 — The anatomy of an HTTP response (what we send back)
+
+Every response has three parts: a status code, headers, and a body.
+
+**Status codes — the most important ones for this project:**
+
+| Code | Name | When to use |
+| --- | --- | --- |
+| `200` | OK | Successful read or login — data returned |
+| `201` | Created | Something new was created (register, save workout) |
+| `400` | Bad Request | Client sent malformed/missing data |
+| `401` | Unauthorized | Not logged in, or token invalid/expired |
+| `403` | Forbidden | Logged in but not allowed (wrong role) |
+| `404` | Not Found | Resource doesn't exist |
+| `409` | Conflict | Duplicate — email/username already registered |
+| `500` | Internal Server Error | Something broke on the server |
+
+Rule of thumb: `2xx` = success, `4xx` = client's fault, `5xx` = server's fault.
+
+**Headers** — Express sets `Content-Type: application/json` automatically when you call `res.json()`. You rarely set headers manually unless handling CORS or cookies.
+
+**Body** — the JSON payload. `res.json()` serialises your object:
+
+```typescript
+res.status(201).json({ token, user });
+// sends: { "token": "eyJ...", "user": { "id": "...", ... } }
+
+res.status(401).json({ error: 'Invalid credentials' });
+// sends: { "error": "Invalid credentials" }
+```
+
+Consistency rule: **always use the same shape for errors** — `{ error: "..." }`. The frontend team writes one error handler that works everywhere.
+
+---
+
+## Lesson 85 — Common Express req and res methods used in this project
+
+**Reading from `req`:**
+
+```typescript
+req.body                    // parsed JSON body (POST/PUT/PATCH)
+req.params.id               // route segment: /users/:id
+req.query.exercise          // query string: ?exercise=squats
+req.headers.authorization   // "Bearer <token>"
+req.user                    // attached by requireAuth middleware (custom)
+```
+
+**Sending with `res` — the three patterns you'll use:**
+
+```typescript
+// 1. Success with data
+res.status(200).json({ token, user });
+res.status(201).json({ token, user });
+
+// 2. Operational error (AppError caught)
+res.status(error.statusCode).json({ error: error.message });
+
+// 3. Unexpected error (500)
+res.status(500).json({ error: 'Something went wrong' });
+```
+
+**The one rule:** call `res.json()` (or any `res.send*`) **exactly once** per request. Calling it twice throws a "headers already sent" error. This is why error handlers use `return` after sending, and why `try/catch` always ends with one clear path.
+
+Express does not enforce this — TypeScript does not catch it — it's a runtime crash if you get it wrong. The `void` return type on controller functions is your reminder: after sending, there is nothing left to do.
+
+---
+
+## Lesson 86 — What a routes file is and why it exists
+
+**The business reason**
+
+A user on the MoveVerse app taps "Sign Up." The frontend sends `POST /api/v1/auth/register`. Express needs to know: "that URL + that method → call `handleRegister`." The routes file is the map that makes that connection. Without it, the controller functions you wrote exist in memory but are unreachable — like a business that has a phone but is not in the directory.
+
+**What the routes file does**
+
+Exactly one thing: bind a URL path + HTTP method to a controller function.
+
+```typescript
+router.post('/register', handleRegister);
+router.post('/login',    handleLogin);
+```
+
+That is the entire file. No logic, no SQL, no `req`, no `res`.
+
+**Express Router vs the main app**
+
+`Router()` creates a mini Express app. It handles its own set of routes and gets mounted into the main app in `index.ts` at a prefix:
+
+```typescript
+// index.ts
+app.use('/api/v1/auth', authRouter);
+```
+
+The prefix `/api/v1/auth` lives in `index.ts`, not in the routes file. This matters: if the business bumps from v1 to v2, only `index.ts` changes — not every route file.
+
+Final paths the client sees:
+- `POST /api/v1/auth/register` → `handleRegister`
+- `POST /api/v1/auth/login` → `handleLogin`
+
+**What the routes layer must never do**
+
+- Import from models or services
+- Write `req` or `res` — only controllers do that
+- Contain `if` statements, `try/catch`, or any logic
+
+---
+
+## Lesson 87 — Why the URL prefix lives in index.ts, not in the routes file
+
+When you write `router.post('/register', handleRegister)`, you are only defining the **suffix** — the part after whatever prefix the router is mounted at.
+
+The prefix (`/api/v1/auth`) is declared at mount time in `index.ts`:
+
+```typescript
+app.use('/auth', authRouter);
+```
+
+**Why this split?**
+
+Imagine you have five route files: auth, users, workouts, movements, leaderboard. If the business decides everything should be under `/api/v1/`, you change **one line** in `index.ts`:
+
+```typescript
+app.use('/api/v1/auth', authRouter);
+```
+
+Without this split, you would have to open every single routes file and edit the path prefix in each one. The routes file owns the suffix; `index.ts` owns the prefix. Change happens in one place.
+
+---
+
+## Lesson 88 — HTTP methods and what they mean (GET, POST, PUT, DELETE, PATCH)
+
+Each HTTP method carries a meaning about what you are trying to do to a resource. Express exposes each one as a method on `router`:
+
+| Method   | Meaning                          | Example                        |
+| -------- | -------------------------------- | ------------------------------ |
+| `GET`    | Read — fetch existing data       | `GET /users/me` — who am I?    |
+| `POST`   | Create — make something new      | `POST /auth/register` — sign up |
+| `PUT`    | Replace — overwrite a full record | `PUT /users/me` — replace profile |
+| `PATCH`  | Update — change part of a record | `PATCH /users/me` — change username only |
+| `DELETE` | Remove a resource                | `DELETE /workouts/123`         |
+
+**Why register and login are both POST**
+
+Register creates a new user row — `POST` is correct (creating a resource).  
+Login does not create anything permanent, but it does create a session/token, and it sends a password in the body. `GET` requests must never carry sensitive data in the body (some clients ignore it; logs capture URLs). So login is `POST` too — the password travels in the request body, not in the URL.
+
+**The rule of thumb:** if the operation changes state or sends sensitive data → `POST` (or `PUT`/`PATCH`/`DELETE`). If it only reads → `GET`.
+
+---
+
+## Lesson 89 — camelCase vs snake_case in API responses: what production actually uses
+
+**The short answer:** camelCase is the dominant convention for JavaScript/TypeScript APIs, but snake_case is also used by major APIs and is a valid, simpler choice when the frontend team is the same team.
+
+**Why camelCase is common in JS/TS APIs**
+
+JSON was born from JavaScript. JavaScript uses camelCase natively. A React developer writing `user.createdAt` feels natural; `user.created_at` feels like it belongs in a Python or Ruby codebase. Most major JS-ecosystem APIs (Stripe, Google, Shopify) use camelCase in their responses.
+
+**Why snake_case is also legitimate**
+
+GitHub and Twitter/X both use snake_case. PostgreSQL uses snake_case. If the backend stays snake_case end-to-end, there is no transformation layer needed — what comes out of the DB goes straight into the JSON response with no extra code.
+
+**The transformation problem**
+
+If you choose camelCase for the API but snake_case in the DB, you need a transformation step somewhere — either in the service, the controller, or via a library like `humps`. This adds complexity and is another place for bugs to hide.
+
+**MoveVerse decision: snake_case throughout**
+
+- DB columns: snake_case (PostgreSQL convention)
+- API responses: snake_case (matches DB directly — no transformation)
+- API request bodies: snake_case (consistent with responses)
+
+This means no transformation layer is needed anywhere. The DB row goes straight into `res.json()`. The frontend team (same team) knows to expect snake_case.
+
+**When you would reconsider this**
+
+If MoveVerse ever published a public API consumed by third-party developers — most of whom would be JavaScript developers — camelCase would be the better choice. At that point, add a transform at the controller layer (or use an ORM like Prisma that handles it automatically).
+
+---
+
+## Lesson 90 — What middleware is and why requireAuth exists
+
+**The business reason**
+
+Every route after login — saving a workout, viewing your profile, checking the leaderboard rank — should only work if you are logged in. The frontend proves this by sending the JWT it received at login in every protected request:
+
+```
+Authorization: Bearer <token>
+```
+
+The middleware is the guard that sits between the route and the controller. It reads that header, verifies the token, and either lets the request through or stops it with a 401. Without it, the controller has no way to know who is making the request.
+
+**The middleware function signature**
+
+```typescript
+(req: Request, res: Response, next: NextFunction): void
+```
+
+It looks exactly like a controller — `req`, `res` — plus one extra argument: `next`. Calling `next()` tells Express "I'm done here, move on to the next handler." Not calling it (and sending a response instead) stops the chain dead.
+
+**How it sits between the route and the controller**
+
+```typescript
+router.get('/me', requireAuth, handleGetMe);
+//                ^^^^^^^^^^^
+//                middleware runs first
+//                only if it calls next() does handleGetMe run
+```
+
+**What requireAuth does, step by step**
+
+1. Read `req.headers.authorization` — expect `Bearer <token>`
+2. If missing or wrong format → `res.status(401).json(...)` and `return` — stop
+3. Call `jwt.verify(token, secret)` — throws if expired or tampered
+4. If valid → attach `req.user = { userId: decoded.userId }` and call `next()`
+5. If verify throws → catch it, send 401 — stop
+
+---
+
+## Lesson 91 — The `next` function: how Express chains handlers
+
+Express processes a request through a chain of functions. Each function either:
+- **Sends a response** — the chain ends (no more handlers run)
+- **Calls `next()`** — passes control to the next handler in the chain
+
+```
+request → requireAuth → handleGetMe → response
+              ↓ next()       ↓ res.json()
+```
+
+If `requireAuth` sends a 401, it does NOT call `next()`, so `handleGetMe` never runs. This is how middleware "guards" a route.
+
+**The rule:** in any middleware function, you must do exactly one of:
+- Call `next()` (hand off)
+- Send a response (end the cycle)
+
+Never both. Never neither (the request would hang forever with no response).
+
+---
+
+## Lesson 92 — TypeScript module augmentation: adding `req.user` to Express
+
+Express's `Request` type does not have a `user` property — it's not part of the library. If you write `req.user = { userId: '...' }` in the middleware, TypeScript throws a compile error: *Property 'user' does not exist on type 'Request'.*
+
+The fix is **module augmentation** — you tell TypeScript to add a property to an existing third-party type, without modifying the library itself. You do this in a `.d.ts` declaration file:
+
+```typescript
+// src/types/express.d.ts
+declare global {
+  namespace Express {
+    interface Request {
+      user?: { userId: string };
+    }
+  }
+}
+```
+
+**Why `user?` and not `user`?**
+
+The `?` makes it optional. Unauthenticated routes (register, login, leaderboard) do not have a user attached — if `user` were required, TypeScript would complain every time you accessed `req` on a public route.
+
+**Why a `.d.ts` file and not a `.ts` file?**
+
+A `.d.ts` file contains only type declarations — no runtime code. It is automatically picked up by the TypeScript compiler as long as it lives inside the `src/` directory and `tsconfig.json` includes that path. No import needed anywhere.
+
+---
+
+## Lesson 93 — What `jwt.verify()` actually returns at runtime
+
+`jwt.verify(token, secret)` returns the **decoded payload** — exactly what was passed into `jwt.sign()` when the token was created, plus two standard fields the JWT library adds automatically:
+
+```javascript
+// We signed: jwt.sign({ userId }, secret, { expiresIn: '7d' })
+// verify returns:
+{
+  userId: "3f7a1b2c-...",   // what we put in
+  iat: 1749123456,          // "issued at" — Unix timestamp, added automatically
+  exp: 1749728256           // "expiry"    — Unix timestamp, added automatically
+}
+```
+
+- `iat` = issued at — when the token was created
+- `exp` = expiry — `iat` + 7 days in our case
+
+`jwt.verify()` checks `exp` against the current time automatically. If the token is expired, tampered with, or signed with the wrong secret — it **throws** an error instead of returning. That is why the call must be inside a `try/catch`.
+
+**Why we cast `as JwtPayload`**
+
+TypeScript sees the return type of `jwt.verify()` as `string | JwtPayload` — it does not know our payload's shape. The `as JwtPayload` cast tells TypeScript: "trust me, this object has a `userId` string." At runtime, nothing changes — the object still has `iat` and `exp` — but TypeScript now allows `decoded.userId` without a compile error.
+
+**The rule: to know what `decoded` contains, always look at `generateJWT`.**
+
+The payload you get back from `verify` is exactly what you put into `sign`. If you do not know what keys were signed, go back to `generateJWT` and read what was passed as the first argument.
+
+---
+
+## Lesson 94 — How to add more data to the JWT payload (e.g. role)
+
+The JWT payload is just an object — you can put any data you want into it by adding more properties to the object passed to `jwt.sign()`.
+
+**Example: adding `role`**
+
+```typescript
+// Before — only userId
+const generateJWT = (userId: string): string => {
+  return jwt.sign({ userId }, secret, { expiresIn: '7d' });
+};
+
+// After — userId + role
+const generateJWT = (userId: string, role: 'user' | 'admin'): string => {
+  return jwt.sign({ userId, role }, secret, { expiresIn: '7d' });
+};
+```
+
+At the call sites (`register` and `login`), pass the role from the user object:
+
+```typescript
+const token = generateJWT(user.id, user.role);
+```
+
+`user.role` already exists on `SafeUser` — it comes directly from the DB column which defaults to `'user'`.
+
+**Also update `JwtPayload`** to match what is now being signed:
+
+```typescript
+interface JwtPayload {
+  userId: string;
+  role: 'user' | 'admin';  // add this
+}
+```
+
+`JwtPayload` and the object passed to `jwt.sign()` must always stay in sync — they are the same contract, one for TypeScript and one for the JWT library.
+
+**When to add role to the token**
+
+Not now. Role is only needed when building admin-only routes (a later phase). Adding it before it is used is scope creep. When that phase arrives: update `generateJWT`, update `JwtPayload`, update `req.user` in `express.d.ts`, and add a separate `requireAdmin` middleware.
+
+---
+
+## Lesson 95 — `declare global`, `namespace`, `interface`, and `export {}` in a `.d.ts` file
+
+This is the full pattern used in `src/types/express.d.ts`:
+
+```typescript
+declare global {
+  namespace Express {
+    interface Request {
+      user?: { userId: string };
+    }
+  }
+}
+
+export {};
+```
+
+Each keyword has a specific job:
+
+**`declare`**
+
+Tells TypeScript: "I am describing a type — there is no runtime code here." It is a compile-time-only instruction. Nothing from a `declare` block ends up in the compiled JavaScript.
+
+**`declare global { ... }`**
+
+`global` means: "put this declaration in the global scope, visible everywhere in the project without importing." Together, `declare global { ... }` is how you add types to the global environment from inside a module file.
+
+**`namespace Express`**
+
+Express uses TypeScript namespaces internally to organise its types. `namespace Express` opens that namespace so you can reach inside it. Think of it like opening a drawer labelled "Express" that already exists — you are not creating it, you are adding something to it.
+
+**`interface Request { ... }`**
+
+TypeScript has a feature called **declaration merging** — if you declare an `interface` with the same name as one that already exists, TypeScript merges the two rather than replacing the first. Express already has an `interface Request` with `body`, `params`, `query`, `headers`, and so on. Writing another `interface Request` here does not replace it — it *adds* `user?` to it. The result is one merged interface with all the original properties plus yours.
+
+**`export {}`**
+
+This is the least obvious one. TypeScript treats files in one of two ways:
+
+- **Script** — no `import` or `export` statements → declarations are automatically global
+- **Module** — has at least one `import` or `export` statement → declarations are scoped to that file only
+
+`declare global` is only meaningful inside a **module** file. If the file has no imports or exports, TypeScript sees it as a script, `declare global` has no effect, and the augmentation does not apply correctly.
+
+`export {}` is a no-op at runtime — it exports nothing — but it makes TypeScript treat the file as a module. That single line is what activates `declare global`.
+
+**In plain English, the whole file says:**
+
+"This file is a module (`export {}`). Inside the global scope (`declare global`), inside Express's namespace (`namespace Express`), merge `user?` into the existing Request interface (`interface Request`)."
+
+---
+
+## Lesson 96 — curl: what it is and how to read the flags
+
+`curl` is a command-line tool for sending HTTP requests. It is built into Windows 11, macOS, and Linux — no install needed. In production teams, developers use it to manually test API endpoints before connecting a frontend.
+
+**Anatomy of a curl command**
+
+```bash
+curl -X POST http://localhost:5600/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"player1","email":"player1@test.com","password":"password123"}'
+```
+
+| Flag | Stands for | What it does |
+|---|---|---|
+| `-X POST` | method | Sets the HTTP method. Without this, curl defaults to `GET`. |
+| `-H "..."` | header | Adds a request header. You can use `-H` multiple times for multiple headers. |
+| `-d '...'` | data | The request body. curl sends this as the body of the request. |
+| `\` | (shell) | Line continuation — splits one command across multiple lines for readability. |
+
+**Why `-H "Content-Type: application/json"` is required**
+
+This header tells the server what format the body is in. Without it, `express.json()` middleware does not parse the body — `req.body` arrives as `undefined` and the controller throws a TypeError. Always include it on POST/PUT/PATCH requests with a JSON body.
+
+**Why single quotes around the body**
+
+```bash
+-d '{"username":"player1"}'
+```
+
+The body contains double quotes. If you wrap the whole thing in double quotes, the shell tries to interpret the inner double quotes and breaks the JSON. Single quotes tell the shell: "treat everything inside literally."
+
+**Integration test vs unit test**
+
+- **Integration test** — sends a real HTTP request to the running app, which hits the real database. Verifies the full stack works end to end. Requires `docker compose up -d`.
+- **Unit test** — tests one function in isolation, no database or HTTP involved. Faster but narrower — only proves that one function behaves correctly, not that all the layers connect correctly.
+
+curl commands are always integration tests.
+
+---
+
+## Lesson 97 — The underscore prefix convention for intentionally unused variables
+
+---
+
+## Lesson 97 — The underscore prefix convention for intentionally unused variables
+
+ESLint's `no-unused-vars` rule throws an error when you declare a variable but never use it. But sometimes you *need* to declare a variable just to discard it — most commonly when destructuring an object to exclude a property:
+
+```typescript
+// We want safeUser (everything except password_hash)
+// But destructuring forces us to name the excluded property
+const { password_hash, ...safeUser } = user; // ← ESLint error: password_hash unused
+```
+
+**The fix: prefix with `_`**
+
+```typescript
+const { password_hash: _password_hash, ...safeUser } = user; // ← ESLint ignores it
+```
+
+`password_hash: _password_hash` is renamed destructuring — it takes the `password_hash` property and assigns it to a variable named `_password_hash`. The `_` prefix is a universal convention meaning: "I know this is unused — that is intentional."
+
+By default, `@typescript-eslint/no-unused-vars` ignores any variable whose name starts with `_`. No extra config needed.
+
+**Why not just use a different approach?**
+
+You could avoid the variable entirely by building the object manually:
+
+```typescript
+const safeUser = { id: user.id, username: user.username, ... }; // tedious, error-prone
+```
+
+The destructuring + underscore pattern is cleaner and more maintainable — especially as the User interface grows.
+
+---
+
+## Lesson 98 — When Docker requires a full rebuild (`--build`) vs a restart
+
+Docker builds an image once and bakes all project files into it at that point. How changes reach the running container depends on whether the file is volume-mounted.
+
+**What is volume-mounted in MoveVerse:**
+
+```yaml
+volumes:
+  - ./src:/app/src   # only src/ is mounted
+```
+
+Only `./src` is mounted — changes to any `.ts` file inside `src/` are reflected immediately because the container reads from the host folder in real time.
+
+**Everything else is baked into the image** — it does not update until you rebuild:
+
+| File changed | What to do |
+|---|---|
+| Anything in `src/` | Nothing — changes reflect immediately via volume mount |
+| `eslint.config.mjs` | `docker compose down && docker compose up --build` |
+| `tsconfig.json` | `docker compose down && docker compose up --build` |
+| `package.json` / `package-lock.json` | `docker compose down && docker compose up --build` |
+| `Dockerfile` | `docker compose down && docker compose up --build` |
+| `.env` | `docker compose down && docker compose up -d` (no rebuild needed — env vars are injected at runtime, not baked into the image) |
+
+**The symptom when you forget to rebuild**
+
+You change a config file, save it, the container keeps running — and the old behaviour continues as if nothing changed. No error, no warning. The container is simply running an old version of the file.
+
+**The rule:** if the change is outside `src/`, rebuild.
+
+---
+
+## Lesson 99 — `curl -i`: how to see the HTTP status code in the terminal
+
+By default, curl only prints the response body. The status code (`200`, `401`, `409`, etc.) is part of the response headers — and headers are hidden unless you ask for them.
+
+**Add `-i` to include headers:**
+
+```bash
+curl -i -X POST http://localhost:5600/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"nobody@test.com","password":"password123"}'
+```
+
+**What you see with `-i`:**
+
+```
+HTTP/1.1 401 Unauthorized        ← status line — method, version, code, and reason phrase
+X-Powered-By: Express
+Content-Type: application/json
+Date: ...
+                                 ← blank line separating headers from body
+{"error":"Invalid credentials"}  ← body
+```
+
+**Why the status code matters in testing**
+
+The body alone is not enough to verify a test. Two different scenarios could return the same body shape — what distinguishes them is the status code. A `401` and a `403` might both return `{ "error": "..." }`, but they mean different things:
+- `401` — not authenticated (no valid token)
+- `403` — authenticated but not allowed (valid token, wrong role)
+
+Always verify both the status code **and** the body when testing an endpoint.

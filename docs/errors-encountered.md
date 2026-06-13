@@ -235,3 +235,135 @@ Bypass `npm run` and call the compiled file directly:
 ```
 heroku run node dist/db/seed.js --app moveverse-backend
 ```
+
+---
+
+## Auth — Phase 7a
+
+---
+
+### ERR-010 — Controller sends `{}` to the frontend instead of `{ token, user }`
+
+**Environment:** Local — any  
+**Where:** `src/controllers/auth.controller.ts` — `handleRegister()`, `handleLogin()`
+
+**Error**  
+No crash. The frontend silently receives an empty object `{}` instead of the expected `{ token, user }`. The request also hangs if the service throws — the rejection is never caught.
+
+**Root Cause**  
+Missing `await` on async service calls:
+```typescript
+const result = register({ username, email, password }); // no await
+res.status(201).json(result); // result is a Promise object, not the data
+```
+`register()` is `async` — it returns a `Promise`. Without `await`, `result` holds the unresolved Promise. `JSON.stringify` on a Promise produces `{}`.
+
+**Resolution**  
+Add `await` to every async service call:
+```typescript
+const result = await register({ username, email, password });
+```
+
+**Prevention**  
+If a function is declared `async`, its return value is always a `Promise` — always `await` it at the call site.
+
+---
+
+### ERR-011 — Cannot set headers after they are sent to the client
+
+**Environment:** Local — any  
+**Where:** `src/controllers/auth.controller.ts` — `handleError()`
+
+**Error**
+```
+Error: Cannot set headers after they are sent to the client
+```
+
+**Root Cause**  
+Missing `return` after sending an error response inside a conditional:
+```typescript
+const handleError = (error: unknown, res: Response): void => {
+  if (error instanceof AppError) {
+    res.status(error.statusCode).json({ error: error.message }); // sends response
+    // no return — falls through to the next line
+  }
+  res.status(500).json({ error: 'Something went wrong' }); // tries to send again — crash
+};
+```
+The first `res.json()` closes the HTTP transaction. The second call tries to write to an already-closed response.
+
+**Resolution**  
+Add `return` immediately after any conditional `res.json()`:
+```typescript
+res.status(error.statusCode).json({ error: error.message });
+return;
+```
+
+**Prevention**  
+`res.json()` must be called exactly once per request. After any `res.send*` inside a branch, always `return`.
+
+---
+
+### ERR-012 — TypeError: Cannot destructure property of undefined
+
+**Environment:** Local — any  
+**Where:** `src/controllers/auth.controller.ts` — `handleRegister()`, `handleLogin()`
+
+**Error**
+```
+TypeError: Cannot destructure property 'username' of undefined
+```
+
+**Root Cause**  
+`req.body` destructuring was placed outside the try/catch block:
+```typescript
+const { username, email, password } = req.body; // outside try — throws here
+try {
+  ...
+} catch (error) {
+  handleError(error, res); // never reached
+}
+```
+If `express.json()` middleware is not registered, or the request has no `Content-Type: application/json` header, `req.body` is `undefined`. The TypeError fires outside the catch, so `handleError` never runs and the request hangs.
+
+**Resolution**  
+Move all `req.body` reads inside the try block:
+```typescript
+try {
+  const { username, email, password } = req.body;
+  ...
+} catch (error) {
+  handleError(error, res);
+}
+```
+
+**Prevention**  
+All code that can throw — including body reads — must live inside the try block so errors are always caught and a response is always sent.
+
+---
+
+### ERR-013 — ESLint config change not reflected until Docker image is rebuilt
+
+**Environment:** Local — Docker container  
+**Command:** `npm run lint` (run via `ts-node-dev` on file save)
+
+**Error**  
+After updating `eslint.config.mjs`, the old ESLint behaviour persisted and errors continued to appear as if the config had not changed.
+
+**Root Cause**  
+Docker builds the image once and copies all project files into it at that point. Changes to files on the host — including config files like `eslint.config.mjs` — are not automatically picked up by a running container unless a volume mount covers that file. Config files at the project root are not volume-mounted (only `./src` is mounted), so the container kept running with the old config baked into the image.
+
+**Resolution**  
+Rebuild the Docker image to bake in the updated config:
+```bash
+docker compose down && docker compose up --build
+```
+
+**Prevention**  
+Any change outside `./src` requires a rebuild:
+- `eslint.config.mjs` → rebuild
+- `tsconfig.json` → rebuild
+- `package.json` / `package-lock.json` → rebuild
+- `Dockerfile` → rebuild
+
+Only files inside `./src` are volume-mounted and reflected immediately without a rebuild. Environment variable changes (`.env`) do not require a rebuild — only `docker compose down && docker compose up -d`.

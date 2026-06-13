@@ -29,7 +29,7 @@
     "url": "https://github.com/psmacabulos/moveverse-backend/issues"
   },
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
   },
   "homepage": "https://github.com/psmacabulos/moveverse-backend#readme",
   "devDependencies": {
