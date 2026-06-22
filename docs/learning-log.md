@@ -2229,6 +2229,73 @@ algorithm  your     cryptographic proof
 
 ---
 
+## Lesson 117 — JWT logout: why it's harder than it looks and what to do for MVP
+
+**The core problem**
+
+JWTs are stateless — the server never stores them. When a user "logs out," the frontend deletes the token from storage. But the token itself remains cryptographically valid until it expires. If someone intercepted the token before logout, they can still use it.
+
+**Server-side logout options**
+
+| Approach | How it works | Trade-off |
+|---|---|---|
+| Client-side only | Frontend deletes the token | Simple — stolen token stays valid until expiry |
+| Token blacklist | Store invalidated tokens in DB/Redis, check on every request | True revocation — adds a DB lookup to every protected request |
+| Short expiry + refresh tokens | 15min access token + long-lived refresh token | Industry standard — significantly more complex to build |
+
+**For Altus MVP: client-side logout is sufficient**
+
+The risk profile of a fitness game does not justify a token blacklist or refresh token system. The token expires in 7 days anyway. A `POST /auth/logout` endpoint that just tells the frontend "ok, delete your token" adds no real security — the frontend should just delete it without asking.
+
+**The general rule**
+
+Match your logout strategy to your security requirements. A banking app needs refresh tokens and short expiry. A game leaderboard does not. Complexity has a cost — only pay it when the threat model demands it.
+
+---
+
+## Lesson 116 — The N+1 problem and how a JOIN solves it
+
+**What N+1 means**
+
+The naive approach to fetching exercises with difficulties:
+
+```
+Query 1: SELECT * FROM exercises              → returns N exercises
+Query 2: SELECT * FROM exercise_difficulties WHERE exercise_id = id_1
+Query 3: SELECT * FROM exercise_difficulties WHERE exercise_id = id_2
+...
+Query N+1: SELECT * FROM exercise_difficulties WHERE exercise_id = id_N
+```
+
+N exercises = N+1 database queries. With 50 exercises that is 51 round trips to the database. Each round trip has overhead: network latency, connection acquisition, query parsing. This compounds quickly.
+
+**The JOIN solution — 1 query always**
+
+```sql
+SELECT e.*, ed.*
+FROM exercises e
+JOIN exercise_difficulties ed ON ed.exercise_id = e.id
+```
+
+One query returns all the data regardless of how many exercises exist. The cost of extra exercises is more rows in one result set — not more queries.
+
+**Time complexity of the JOIN + reshape approach**
+
+| Step | Complexity | Why |
+|---|---|---|
+| SQL JOIN | O(E × D) | One row per exercise-difficulty pair |
+| JavaScript loop | O(E × D) | One pass through all rows |
+| `exerciseMap[id]` lookup | O(1) | JS objects are hash maps |
+| `Object.values()` | O(E) | One pass through map keys |
+
+Overall: **O(E × D)**. Since D is always 3 (Easy/Medium/Hard), this simplifies to **O(E)** — linear in the number of exercises.
+
+**The real win is not algorithmic — it is network round trips**
+
+Reducing from N+1 queries to 1 query eliminates N database round trips. That is where the actual performance gain comes from, not the Big-O complexity.
+
+---
+
 ## Lesson 109 — SQL JOINs: combining two tables in one query
 
 **Why JOINs exist**

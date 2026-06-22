@@ -1,6 +1,6 @@
-# MoveVerse Backend
+# Altus Backend
 
-REST API for the MoveVerse fitness game. Players register, log in, complete exercise sessions tracked by MediaPipe on the frontend, and compete on a leaderboard.
+REST API for the Altus fitness game. Players register, log in, complete exercise sessions tracked by MediaPipe on the frontend, and compete on a leaderboard.
 
 **Stack:** Node.js 24 · Express 5 · TypeScript · PostgreSQL · Docker · JWT
 
@@ -92,7 +92,8 @@ docker compose exec app npm run seed
 
 ## API
 
-**Base URL:** `http://localhost:5600/api/v1`
+**Base URL (local):** `http://localhost:5600/v1`
+**Base URL (production):** `https://api.altus.games/v1`
 
 All responses use `snake_case` field names. Protected routes require a JWT in the `Authorization` header:
 
@@ -114,23 +115,22 @@ Error responses follow this shape:
 |---|---|---|---|
 | POST | `/auth/register` | No | Create account — returns JWT + user |
 | POST | `/auth/login` | No | Login — returns JWT + user |
-| POST | `/auth/google` | No | Google OAuth login/register *(planned)* |
-| POST | `/auth/logout` | 🔒 | Logout *(planned)* |
+| POST | `/auth/google` | No | Google OAuth login/register *(deferred)* |
 
 **Register**
 
 ```bash
-curl -i -X POST http://localhost:5600/api/v1/auth/register \
+curl -i -X POST http://localhost:5600/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"player1","email":"player1@test.com","password":"password123"}'
+  -d "{\"username\":\"player1\",\"email\":\"player1@test.com\",\"password\":\"password123\"}"
 ```
 
 **Login**
 
 ```bash
-curl -i -X POST http://localhost:5600/api/v1/auth/login \
+curl -i -X POST http://localhost:5600/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"player1@test.com","password":"password123"}'
+  -d "{\"email\":\"player1@test.com\",\"password\":\"password123\"}"
 ```
 
 Both return:
@@ -152,12 +152,36 @@ Both return:
 
 ---
 
-### Exercises *(planned)*
+### Exercises
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/exercises` | 🔒 | List all active exercises |
-| GET | `/exercises/:id/difficulties` | 🔒 | Difficulty presets for one exercise |
+| GET | `/exercises` | 🔒 | All active exercises with nested difficulty presets |
+
+Called once after login. The frontend stores the result in React context — not called during gameplay.
+
+```bash
+curl -i http://localhost:5600/v1/exercises \
+  -H "Authorization: Bearer <token>"
+```
+
+Returns:
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Squat",
+    "description": "A lower body exercise targeting quads, hamstrings, and glutes",
+    "calories_per_rep": "0.32",
+    "difficulties": [
+      { "id": "uuid", "level_name": "Easy",   "target_reps": 10, "score_multiplier": "1.00" },
+      { "id": "uuid", "level_name": "Medium", "target_reps": 20, "score_multiplier": "1.50" },
+      { "id": "uuid", "level_name": "Hard",   "target_reps": 40, "score_multiplier": "2.00" }
+    ]
+  }
+]
+```
 
 ---
 
