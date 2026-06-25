@@ -34,11 +34,44 @@ src/config/       db.ts — pg connection pool
 | Service | `verb` — business action | `getExercises`, `register`, `login` |
 | Controller | `handle` + action | `handleGetExercises`, `handleRegister` |
 
+## Automated Testing
+
+**Stack:** Jest + Supertest + ts-jest (all `devDependencies`)
+
+**Run all tests:**
+```
+npm test
+```
+
+**Run one file while debugging:**
+```
+npx jest <filename>   e.g. npx jest workout
+```
+
+**Test files:**
+```
+src/__tests__/
+  auth.test.ts       POST /v1/auth/register, POST /v1/auth/login
+  exercise.test.ts   GET /v1/exercises
+  workout.test.ts    POST /v1/workout_sessions, GET /v1/workout_sessions/me
+```
+
+**Config:** `jest.config.ts` at project root — `preset: ts-jest`, `testEnvironment: node`
+
+**Requirements before running tests:**
+- Docker must be running (`docker compose up -d`)
+- DB must be migrated and seeded
+- `.env` must have `DB_HOST=localhost` (not `db` — that is the Docker internal hostname)
+
+**Pattern:** Integration tests — no mocking, hits real Postgres. Each file registers its own test user in `beforeAll` and cleans up in `afterAll`. Tests are independent across files (separate Jest worker processes, separate DB connections).
+
+---
+
 ## Current state
-- Phases 1–7a complete and merged to `main` — deployed to Heroku
+- Phases 1–9 complete and merged to `main` — deployed to Heroku
 - Phase 7b (Google OAuth) deferred
-- Phase 8 (Exercises endpoint) complete — `GET /v1/exercises` built and tested
-- **Next: Phase 9 — Workout Sessions**
+- Automated tests written for all current endpoints (auth, exercises, workout sessions)
+- **Next: Phase 10 — Achievement System**
 
 ## Branch strategy
 ```

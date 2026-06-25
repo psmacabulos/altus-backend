@@ -4,6 +4,76 @@ Part 1 (`learning-log.md`) logs concepts chronologically as numbered lessons. Th
 
 ---
 
+## Docker
+
+### `docker compose down` vs `docker compose down -v` — what the `-v` flag destroys
+
+```
+docker compose down          ← stops and removes containers, keeps volumes
+docker compose down -v       ← stops containers AND deletes volumes (all database data)
+```
+
+A Docker volume is where Postgres stores its data — every table, every row, every migration. It persists between `docker compose down` and `docker compose up` so your data survives restarts. The `-v` flag deletes that volume entirely.
+
+**When to use each:**
+
+| Situation | Command |
+|---|---|
+| Stop containers to save memory, keep data | `docker compose down` |
+| Wipe everything and start fresh (e.g. fix a bad migration) | `docker compose down -v` |
+
+**After `docker compose down -v`**, the database is empty — no tables, no data. You must re-run migrations and seeds before tests or the app will work:
+
+```
+docker compose exec app npm run migrate
+docker compose exec app npm run seed
+```
+
+Using `-v` by mistake is an easy way to lose all local data. If the goal was just to stop containers, omit the flag.
+
+---
+
+## npm vs npx
+
+### What is the difference between `npm` and `npx`?
+
+Both come with Node.js, but they do different jobs.
+
+**`npm`** is a package manager — it installs, removes, and manages packages. The only way to run code with `npm` is through the `scripts` section in `package.json`:
+
+```json
+"scripts": {
+  "test": "jest",
+  "build": "tsc"
+}
+```
+
+When you run `npm test`, npm looks up the `"test"` key and runs whatever command is there. You cannot pass extra arguments directly — `npm test exercise` does not work the way you might expect.
+
+**`npx`** runs a package binary directly — no `package.json` script needed. If the package is installed locally (in `node_modules/.bin/`), npx finds it and runs it. This lets you pass arguments freely:
+
+```
+npx jest exercise        ← runs Jest with "exercise" as a filter (only runs exercise.test.ts)
+npx jest --coverage      ← runs Jest with the coverage flag
+npx jest auth exercise   ← runs only auth.test.ts and exercise.test.ts
+```
+
+The argument after `jest` is a **test name filter** — Jest treats it as a regex and only runs files whose path matches it.
+
+**When to use which:**
+
+| Situation | Use |
+|---|---|
+| Running a defined project script | `npm run <script>` (or `npm test` for the test script) |
+| Running all tests the normal way | `npm test` |
+| Running one test file while debugging | `npx jest <filename>` |
+| Passing flags to a tool without adding a script | `npx <tool> --flag` |
+| Running a one-off tool without installing it globally | `npx <package>` |
+
+In day-to-day development you will mostly use `npm test` (runs the full suite). Use `npx jest <filter>` when you are working on one file and do not want to wait for every other test to run.
+
+---
+
 ## Project Structure
 
 ### The app/server split — why `app.ts` and `index.ts` are separate files
@@ -203,6 +273,28 @@ API Reference    ← functions and their arguments
 Start with Getting Started. Go to Configuration only when you need to change a specific behaviour. You rarely need the API Reference when beginning.
 
 This applies to every tool — not just Jest. Express, pg, bcryptjs, dotenv — all have npm pages with README examples and official docs with a configuration reference.
+
+### Why you do not import model types into test files
+
+`res.body` in Supertest is typed as `any`. Even if you import a model interface and cast the body, the compiler accepts the cast unconditionally — it does not verify that the API actually returned that shape.
+
+```typescript
+// This looks type-safe but is not — it's just a promise to the compiler
+const body = res.body as WorkoutSession;
+expect(body.score).toBeDefined();
+```
+
+In test files, the `expect()` assertions are the type check. They verify the actual runtime value returned by the endpoint:
+
+```typescript
+expect(res.body.score).toBeDefined(); // checks what the server actually sent
+```
+
+This is more reliable than a compile-time cast on an `any` value.
+
+**When types are useful in test files:** file-level variables that you assign yourself — `let token: string` and `let difficultyId: string`. TypeScript will catch it if you accidentally assign the wrong type to those.
+
+The rule: use types where the compiler can actually enforce something. Do not cast `res.body` just to make the file look more TypeScript-y.
 
 ### The `npm test` script and CI
 

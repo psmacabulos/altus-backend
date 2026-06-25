@@ -367,3 +367,284 @@ Any change outside `./src` requires a rebuild:
 - `Dockerfile` → rebuild
 
 Only files inside `./src` are volume-mounted and reflected immediately without a rebuild. Environment variable changes (`.env`) do not require a rebuild — only `docker compose down && docker compose up -d`.
+
+---
+
+## Automated Testing — Phase 10
+
+---
+
+### ERR-014 — Jest finds zero test files after setup
+
+**Environment:** Local  
+**Command:** `npm test`
+
+**Error**  
+Jest ran and exited with no results — zero test suites, zero tests.
+
+**Root Cause**  
+`testMatch` in `jest.config.ts` was `*.tests.ts` (extra `s`). The glob pattern did not match any file.
+
+**Resolution**  
+Changed to `*.test.ts`.
+
+---
+
+### ERR-015 — Module not found on import of app
+
+**Environment:** Local  
+**Command:** `npm test`
+
+**Error**
+```
+Cannot find module './app.'
+```
+
+**Root Cause**  
+`src/index.ts` had a trailing dot in the import path: `import app from './app.'`.
+
+**Resolution**  
+Removed the trailing dot: `'./app'`.
+
+---
+
+### ERR-016 — `describe`/`it` from wrong module
+
+**Environment:** Local  
+**Command:** `npm test`
+
+**Error**  
+Tests ran but assertions behaved incorrectly or produced unexpected errors.
+
+**Root Cause**  
+`auth.test.ts` imported `describe` and `it` from `'node:test'` — Node's built-in test runner, not Jest. The two runners are incompatible.
+
+**Resolution**  
+Deleted the import entirely. Jest injects `describe`, `it`, `expect`, and `afterAll` as globals — no import is needed in any test file.
+
+---
+
+### ERR-017 — `expect()` silently never runs
+
+**Environment:** Local  
+**Command:** `npm test`
+
+**Error**  
+No error — but the assertion was never actually checked. Tests passed regardless of response content.
+
+**Root Cause**  
+`expect()` was written outside the `it` callback, where the `res` variable was out of scope.
+
+**Resolution**  
+Moved `expect()` inside the `it` callback where `res` is defined.
+
+---
+
+### ERR-018 — Jest finds zero test files (folder name typo)
+
+**Environment:** Local  
+**Command:** `npm test`
+
+**Error**  
+Zero test suites found after creating test files.
+
+**Root Cause**  
+The test folder was named `__test__` (missing `s`). The `testMatch` glob pattern requires `__tests__`.
+
+**Resolution**  
+Renamed the folder to `__tests__`.
+
+---
+
+### ERR-019 — Red underlines on `describe`, `it`, `expect` in VS Code
+
+**Environment:** Local — VS Code  
+**Where:** Any `.test.ts` file
+
+**Error**  
+`Cannot find name 'describe'`, `Cannot find name 'it'`, `Cannot find name 'expect'` — despite `@types/jest` being installed.
+
+**Root Cause**  
+`tsconfig.json` had `"types": ["node"]`. The `"types"` array is an allowlist — once it exists, TypeScript only loads what is listed and ignores all other installed `@types/*` packages, including `@types/jest`.
+
+**Resolution**  
+Added `"jest"` to the array: `"types": ["node", "jest"]`.
+
+**Prevention**  
+If `"types"` is used at all, every required type package must be listed. Adding a new `@types/*` package is not enough — it must also be added to the `"types"` array.
+
+---
+
+### ERR-020 — `token` variable out of scope in test
+
+**Environment:** Local  
+**Where:** `src/__tests__/exercise.test.ts`
+
+**Error**
+```
+Cannot find name 'token'
+```
+
+**Root Cause**  
+`const token = res.body.token` was declared inside `beforeAll`. Variables declared with `const` or `let` inside a function are scoped to that function and destroyed when it returns.
+
+**Resolution**  
+Declared `let token: string` at the file level, then assigned inside `beforeAll` without `const` or `let`:
+```typescript
+let token: string;
+
+beforeAll(async () => {
+  const res = await ...
+  token = res.body.token;
+});
+```
+
+---
+
+### ERR-021 — `.set()` chained after `await`
+
+**Environment:** Local  
+**Where:** `src/__tests__/exercise.test.ts`
+
+**Error**  
+TypeScript error or runtime crash — `.set()` not available on the resolved response object.
+
+**Root Cause**  
+`await` was placed around only the request call, then `.set()` was chained on the result:
+```typescript
+const res = (await request(app).get('/v1/exercises')).set('Authorization', `Bearer ${token}`);
+```
+
+**Resolution**  
+Chain `.set()` before awaiting:
+```typescript
+const res = await request(app).get('/v1/exercises').set('Authorization', `Bearer ${token}`);
+```
+
+---
+
+### ERR-022 — Test gets 401 on second and subsequent runs
+
+**Environment:** Local  
+**Where:** `src/__tests__/exercise.test.ts` — test 1
+
+**Error**
+```
+Expected: 200
+Received: 401
+```
+
+**Root Cause**  
+`afterAll` was deleting `cap@gmail.com` (copied from `auth.test.ts`) but the test registered `exercise@gmail.com`. The test user was never cleaned up. On the next run, `beforeAll` tried to register the same user again, got a 409 conflict, and `res.body.token` was `undefined`. The test then sent `Bearer undefined` → 401.
+
+**Resolution**  
+Changed `afterAll` to delete `exercise@gmail.com` — matching the email used in `beforeAll` exactly.
+
+**Prevention**  
+`afterAll` must delete the exact email(s) that `beforeAll` inserts. Copy-pasting `afterAll` from another test file and forgetting to update the email is a common source of this bug.
+
+---
+
+### ERR-023 — `TypeError: Cannot read properties of undefined` on `res.body.console`
+
+**Environment:** Local  
+**Where:** `src/__tests__/exercise.test.ts`
+
+**Error**
+```
+TypeError: Cannot read properties of undefined (reading 'error')
+```
+
+**Root Cause**  
+`res.body.console.error` was used instead of `res.body.error`. `res.body` is `{ error: "..." }` — there is no `console` property on it, so `res.body.console` is `undefined`, and accessing `.error` on `undefined` throws.
+
+**Resolution**  
+Changed to `res.body.error`.
+
+---
+
+### ERR-024 — Receives 404 when 401 is expected
+
+**Environment:** Local  
+**Where:** `src/__tests__/exercise.test.ts` — invalid token test
+
+**Error**
+```
+Expected: 401
+Received: 404
+```
+
+**Root Cause**  
+The route URL was `/v1/exercise` (missing `s`). That route does not exist so Express returned 404 (route not found) instead of 401 (unauthorized).
+
+**Resolution**  
+Fixed to `/v1/exercises`.
+
+---
+
+### ERR-025 — Assertion with `.toBeDefined` never actually runs
+
+**Environment:** Local  
+**Where:** Any test file
+
+**Error**  
+No error — test passes regardless of whether the value is defined.
+
+**Root Cause**  
+`.toBeDefined` without `()` evaluates to the function reference (always truthy as a value). The assertion is never called.
+
+**Resolution**  
+Add parentheses: `.toBeDefined()`.
+
+---
+
+### ERR-026 — `beforeAll` crashes after `docker compose down -v`
+
+**Environment:** Local  
+**Command:** `npx jest workout`
+
+**Error**
+```
+TypeError: Cannot read properties of undefined (reading 'id')
+```
+at `result.rows[0].id` in `beforeAll`.
+
+**Root Cause**  
+`docker compose down -v` deletes Docker volumes. The Postgres volume holds all database data — tables, migrations, and seed data. After `docker compose up`, the database is completely empty. `SELECT id FROM exercise_difficulties LIMIT 1` returns zero rows, so `result.rows[0]` is `undefined`.
+
+**Resolution**  
+After any `docker compose down -v`, re-run migrations and seeds before running tests:
+```
+docker compose exec app npm run migrate
+docker compose exec app npm run seed
+```
+
+**Prevention**  
+Use `docker compose down` (without `-v`) when you only want to stop containers. Only use `-v` when you intentionally want to wipe all data and start fresh — and always remember to migrate and seed afterward.
+
+---
+
+### ERR-027 — Workout sessions not cleaned up — `afterAll` subquery uses wrong email
+
+**Environment:** Local  
+**Where:** `src/__tests__/workout.test.ts` — `afterAll`
+
+**Error**
+```
+error: update or delete on table "users" violates foreign key constraint "workout_sessions_user_id_fkey"
+```
+
+**Root Cause**  
+When the test email was changed from `workouts@gmail.com` to `workoutz@gmail.com` in `beforeAll`, the subquery in `afterAll` was not updated:
+```typescript
+// subquery still had the old email
+'DELETE FROM workout_sessions WHERE user_id = (SELECT id FROM users WHERE email = $1)',
+['workouts@gmail.com']  // ← wrong email, finds no user, deletes no sessions
+```
+The sessions remained in the DB, and the subsequent `DELETE FROM users` failed because of the FK constraint.
+
+**Resolution**  
+Updated the subquery email to match the email used in `beforeAll`.
+
+**Prevention**  
+When changing a test email, update every reference to it in `afterAll` — both the session cleanup subquery and the user DELETE must use the same email.
