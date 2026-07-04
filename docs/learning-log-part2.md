@@ -56,6 +56,27 @@ Using `-v` by mistake is an easy way to lose all local data. If the goal was jus
 
 ---
 
+### Reaching a Dockerised Postgres from a script running on the host (not inside a container)
+
+`docker compose ps` shows the `db` service's port mapping:
+
+```
+0.0.0.0:5432->5432/tcp
+```
+
+This means Docker **publishes** the container's port 5432 onto the host machine's port 5432. Any process running directly on the host — including a `ts-node` script run in a normal terminal, completely outside any container — can reach Postgres at `localhost:5432` because of this mapping. Nothing about running the script "goes through" Docker; it just connects over the network to the port Docker exposed.
+
+This is exactly why `.env` has `DB_HOST=localhost` and not `DB_HOST=db`:
+
+| Where the code runs | Correct `DB_HOST` | Why |
+|---|---|---|
+| Directly on the host (e.g. `npx ts-node ...`, local Jest tests) | `localhost` | The published port is only reachable from the host under `localhost` |
+| Inside the `app` container (e.g. the real running server) | `db` | `localhost` inside a container means the container itself; `db` is the other container's name on the shared Docker network |
+
+Same database, two different hostnames — the difference is *where the connecting process itself is running*, not where Postgres is running.
+
+---
+
 ## npm vs npx
 
 ### What is the difference between `npm` and `npx`?
@@ -94,6 +115,29 @@ The argument after `jest` is a **test name filter** — Jest treats it as a rege
 | Running a one-off tool without installing it globally | `npx <package>` |
 
 In day-to-day development you will mostly use `npm test` (runs the full suite). Use `npx jest <filter>` when you are working on one file and do not want to wait for every other test to run.
+
+### A dependency can be "installed" without you asking for it
+
+`ts-node` is not listed anywhere in this project's `package.json`, yet `npx ts-node` works. That is because `ts-node-dev` (which *is* a direct `devDependency`) depends on `ts-node` internally. npm installs every transitive dependency into `node_modules` and hoists their executables into `node_modules/.bin/` — which is exactly where `npx` looks. So `ts-node` is real and runnable, just not something the project intentionally added. Relying on a transitive binary is fragile: if `ts-node-dev` ever stops depending on `ts-node`, the command silently breaks with no warning from this project's own dependency list.
+
+### Running a single file directly with `ts-node`
+
+There is no npm script for "run one arbitrary `.ts` file", so use `npx` directly:
+
+```bash
+npx ts-node -r dotenv/config src/models/achievement.model.ts
+```
+
+- `npx ts-node` — runs that file through the TypeScript compiler, no build step needed
+- `-r dotenv/config` — see below
+
+Useful for debugging one model/service function in isolation without booting the whole server.
+
+### The `-r` flag — preloading a module before your file runs
+
+`-r` (`--require`) is a native Node.js CLI flag: "before executing my target file, `require()` this module first." `-r dotenv/config` preloads the `dotenv/config` module, whose entire job is a side effect — read `.env` and copy its keys into `process.env`. Nothing is imported by name; requiring it is the action.
+
+**Why it was needed here:** [src/app.ts](../src/app.ts) does the same thing as a top-of-file import — `import 'dotenv/config';` — because `app.ts` is always the first file loaded when the real server starts. Running `achievement.model.ts` directly skips `app.ts` entirely, so nothing loads `.env` unless told to. `-r dotenv/config` is the CLI equivalent for standalone scripts. This is documented in dotenv's own README as the "preload" pattern — built for exactly this case.
 
 ---
 
@@ -438,7 +482,49 @@ interface UserAchievement extends Achievement {
 
 ---
 
+## SQL
+
+### `INSERT` clause order: `VALUES` → `ON CONFLICT` → `RETURNING`
+
+Postgres enforces a fixed clause order on `INSERT`. `RETURNING` must always come **last** — same family of bug as Lesson 120 (`JOIN` must come before `WHERE`): SQL clauses aren't free-order, each one only makes sense once the clauses before it have already been applied.
+
+```sql
+-- ❌ syntax error at or near "ON" — RETURNING before ON CONFLICT
+INSERT INTO user_achievements (user_id, achievement_id)
+VALUES ($1, $2) RETURNING user_id, achievement_id, unlocked_at
+ON CONFLICT DO NOTHING
+
+-- ✅ correct order
+INSERT INTO user_achievements (user_id, achievement_id)
+VALUES ($1, $2)
+ON CONFLICT DO NOTHING
+RETURNING user_id, achievement_id, unlocked_at
+```
+
+`RETURNING` describes what to hand back *after* the conflict has already been resolved — Postgres has to know whether the row was inserted before it can decide what to return, so it can't appear earlier in the statement.
+
+### `ON CONFLICT DO NOTHING` + `RETURNING` can return zero rows — not an error
+
+When a conflict fires and `DO NOTHING` skips the insert, `RETURNING` has nothing to return — the query still succeeds, but `result.rows` is an empty array, not a row. `result.rows[0]` is `undefined` in that case.
+
+This matters for the function's return type. A signature like `Promise<Achievement>` (non-optional) is a lie if the row can legitimately be absent — the caller has no compiler-enforced reminder that "already unlocked" is a real, expected outcome, not an edge case to ignore. The honest signature is `Promise<Achievement | undefined>` (or similar), which forces every caller to handle "nothing happened" explicitly.
+
+This distinction is exactly what `evaluateAchievements()` needs to build the `new_achievements` array (Phase 10) — it has to tell "just unlocked this workout" apart from "already had it," and that's only possible if `unlock()`'s return value can honestly express both cases.
+
+---
+
 ## Development Workflow
+
+### How to figure out "what's next" without being told
+
+The instinct is to pull the next unchecked box off the roadmap and start typing. A more reliable process:
+
+1. **Re-anchor on the user story, not the code.** Ask what the *user* actually experiences, not which function is missing. For Phase 10: "After I finish a workout, I might unlock a badge. I can also look at all my badges anytime" — that's two separate flows, not one task.
+2. **Trace each flow's full request lifecycle before writing anything** — e.g. `POST /workout_sessions` → save session → check thresholds → insert newly earned achievements → return them alongside the session response.
+3. **Check what already exists before assuming the roadmap is current.** The roadmap is a plan; the code is the truth. Read the actual file to see which pieces of a flow are already built, not just which checkboxes are ticked.
+4. **Build in the order that unblocks the most other work: Model → Service → Controller → Route.** Each layer literally calls the one below it, so a service function can't be written until the model function it depends on exists. Whichever missing model function most other pending work depends on is the one to write first — not necessarily the first one listed.
+
+Applying this to Phase 10 surfaced that the model layer was still missing a plain, unfiltered `getAll()` (all achievements + thresholds, no user, no join) — without it, `evaluateAchievements()` in the service layer has nothing to compare a user's stats against. That gap wasn't visible from the roadmap text alone; it only showed up by tracing what the *next* layer up actually needs.
 
 ### Writing TODOs as a plan before coding
 
