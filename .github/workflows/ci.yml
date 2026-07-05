@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
       - run: 'npm ci'
       - run: 'npm run lint'
@@ -27,7 +27,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
       - run: 'npm ci'
       - run: 'npm run build'
@@ -43,7 +43,7 @@ jobs:
       - name: Deploy to Heroku
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-          HEROKU_APP_NAME: moveverse-backend
+          HEROKU_APP_NAME: altus-backend
           HEROKU_EMAIL: patrick.macabulos@gmail.com
         run: |
           cat > ~/.netrc <<EOF

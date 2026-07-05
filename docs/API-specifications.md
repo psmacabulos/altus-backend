@@ -308,7 +308,7 @@ This prevents score manipulation — a tampered request body cannot change the s
 }
 ```
 
-**Errors:** `400` missing or invalid fields — `404` exercise difficulty not found
+`new_achievements` is always an array — empty `[]` when no new achievements were unlocked. The frontend uses this to show a badge popup after a session.
 
 > After saving, the backend checks whether the user has unlocked any new achievements. This happens automatically — no separate API call is needed from the frontend. `new_achievements` is always present, as an empty array `[]` when nothing new was unlocked — never omitted or `null`.
 

@@ -1,6 +1,6 @@
 -- EXAMPLE MIGRATION FILE — for a fake "library" app
 -- Reference this while writing your own migration files.
--- Do NOT copy-paste — translate the patterns to MoveVerse's schema.
+-- Do NOT copy-paste — translate the patterns to Altus's schema.
 --
 -- REFERENCE DOCS (read these alongside this file):
 --

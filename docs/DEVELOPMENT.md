@@ -4,7 +4,7 @@
 Node.js + Express + TypeScript + PostgreSQL backend for **Altus** (formerly MoveVerse) — a fitness game where players complete exercises tracked by MediaPipe on the frontend and compete on a leaderboard.
 
 - **Local:** `http://localhost:5600` · Docker-based dev (`docker compose up -d`)
-- **Production:** `https://api.altus.games` · Heroku (app name: `moveverse-backend`)
+- **Production:** `https://api.altus.games` · Heroku (app name: `altus-backend`)
 - **Route prefix:** `/v1/` (not `/api/v1/`)
 - **Terminal:** Git Bash always
 

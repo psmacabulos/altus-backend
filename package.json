@@ -1,7 +1,7 @@
 {
-  "name": "moveverse-backend",
+  "name": "altus-backend",
   "version": "1.0.0",
-  "description": "This is the repo for moveverse web application",
+  "description": "This is the repo for altus web application",
   "main": "dist/index.js",
   "directories": {
     "doc": "docs"
@@ -20,18 +20,18 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/psmacabulos/moveverse-backend.git"
+    "url": "git+https://github.com/psmacabulos/altus-backend.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/psmacabulos/moveverse-backend/issues"
+    "url": "https://github.com/psmacabulos/altus-backend/issues"
   },
   "engines": {
     "node": "24.x"
   },
-  "homepage": "https://github.com/psmacabulos/moveverse-backend#readme",
+  "homepage": "https://github.com/psmacabulos/altus-backend#readme",
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/cors": "^2.8.19",

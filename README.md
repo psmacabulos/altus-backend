@@ -19,7 +19,7 @@ No local Node.js install required — everything runs inside Docker.
 
 ```bash
 git clone <repo-url>
-cd moveverse-backend
+cd altus-backend
 ```
 
 Copy the environment file and fill in your values:

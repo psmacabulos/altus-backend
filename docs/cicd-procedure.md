@@ -153,7 +153,7 @@ Add a third job to `.github/workflows/ci.yml`:
       - name: Deploy to Heroku
         env:
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-          HEROKU_APP_NAME: moveverse-backend
+          HEROKU_APP_NAME: altus-backend
           HEROKU_EMAIL: patrick.macabulos@gmail.com
         run: |
           cat > ~/.netrc <<EOF
@@ -233,7 +233,7 @@ heroku login
 Then run the seed command:
 
 ```
-heroku run npm run seed:prod --app moveverse-backend
+heroku run npm run seed:prod --app altus-backend
 ```
 
 `heroku run` opens a temporary one-off dyno, runs the command against the live production database, then closes. All seed inserts use `ON CONFLICT DO NOTHING` so it is safe to run again without duplicating data.
