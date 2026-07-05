@@ -801,7 +801,7 @@ Practical notes:
 
 - Check `error.code === '23505'`, not the message text — Postgres error codes are stable across versions; messages are not.
 - A pre-check (`findByEmail()` before inserting) gives friendlier UX but does **not** replace handling 23505 — two registrations can race between check and insert. The DB unique constraint is the real guarantee; the pre-check is politeness.
-- Unanticipated errors (DB down) are caught by nobody in particular — they bubble to the global error handler (Phase 13), which logs and returns a generic 500. That safety net is why you don't write try/catch everywhere "just in case."
+- Unanticipated errors (DB down) are caught by nobody in particular — they bubble to the global error handler (Phase 12), which logs and returns a generic 500. That safety net is why you don't write try/catch everywhere "just in case."
 
 ---
 

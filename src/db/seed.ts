@@ -83,6 +83,33 @@ const seedAchievements = async (): Promise<void> => {
   }
 };
 
+const seedWorkoutSessions = async (): Promise<void> => {
+  const userResult = await pool.query(`SELECT id FROM users WHERE email = $1`, [
+    process.env.ADMIN_EMAIL,
+  ]);
+  const userId = userResult.rows[0].id;
+
+  const difficultyEasyResult = await pool.query(
+    `SELECT ed.id, ed.score_multiplier, e.calories_per_rep
+     FROM exercise_difficulties ed
+     JOIN exercises e ON e.id = ed.exercise_id
+     WHERE e.name = $1 AND ed.level_name = $2`,
+    ['Squat', 'Easy']
+  );
+  const { id: difficultyId, score_multiplier, calories_per_rep } = difficultyEasyResult.rows[0];
+
+  const sessions = [8, 9, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10]; // reps_completed for a few sample sessions
+  for (const reps of sessions) {
+    await pool.query(
+      `INSERT INTO workout_sessions (user_id, exercise_difficulty_id, reps_completed, score, duration_seconds, calories_burned)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT DO NOTHING`,
+      [userId, difficultyId, reps, Math.round(reps * score_multiplier), 60, reps * calories_per_rep]
+    );
+  }
+  console.log('Workout sessions seeded.');
+};
+
 const seedUserAchievements = async (): Promise<void> => {
   // 1. look up the admin user id
   const userResult = await pool.query(`SELECT id FROM users WHERE email = $1`, [
@@ -116,6 +143,9 @@ const runSeed = async (): Promise<void> => {
 
   console.log('Seeding exercise difficulties...');
   await seedExerciseDifficulties();
+
+  console.log('Seeding workout_sessions...');
+  await seedWorkoutSessions();
 
   console.log('Seeding achievements...');
   await seedAchievements();

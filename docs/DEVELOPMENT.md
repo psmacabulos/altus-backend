@@ -51,9 +51,10 @@ npx jest <filename>   e.g. npx jest workout
 **Test files:**
 ```
 src/__tests__/
-  auth.test.ts       POST /v1/auth/register, POST /v1/auth/login
-  exercise.test.ts   GET /v1/exercises
-  workout.test.ts    POST /v1/workout_sessions, GET /v1/workout_sessions/me
+  auth.test.ts         POST /v1/auth/register, POST /v1/auth/login
+  exercise.test.ts     GET /v1/exercises
+  workout.test.ts      POST /v1/workout_sessions, GET /v1/workout_sessions/me
+  achievements.test.ts POST /v1/workout_sessions (new_achievements), GET /v1/users/me/achievements
 ```
 
 **Config:** `jest.config.ts` at project root — `preset: ts-jest`, `testEnvironment: node`
@@ -70,8 +71,9 @@ src/__tests__/
 ## Current state
 - Phases 1–9 complete and merged to `main` — deployed to Heroku
 - Phase 7b (Google OAuth) deferred
-- Automated tests written for all current endpoints (auth, exercises, workout sessions)
-- **Next: Phase 10 — Achievement System**
+- Phase 10 (Achievement System) code-complete, all tests passing on `feat/achievements` — not yet merged to `dev`/`main`
+- Automated tests written for all current endpoints (auth, exercises, workout sessions, achievements)
+- **Next: Phase 11 — Leaderboard**
 
 ## Branch strategy
 ```
@@ -86,7 +88,9 @@ feat/* → one branch per phase (current: merge feat/exercises → dev → main)
 - Score and calories calculated server-side only — frontend never sends a score
 - JWT payload: `{ userId }` only — 7 day expiry
 - Logout is client-side only for MVP — no blacklist needed
-- `AppError` class lives in `auth.service.ts` for now — move to shared utils in Phase 13
+- `AppError` class lives in `auth.service.ts` for now — move to shared utils in Phase 12
+- Achievement evaluation happens synchronously inside `saveSession()`, on every workout save — never lazily on `GET /users/me/achievements` (that endpoint is a pure read, no side effects)
+- Collection endpoints (`getMyAchievements`, `getSessionsByUser`, etc.) return `[]` for "nothing here" — never `null`
 
 ## Key docs
 - `docs/API-specifications.md` — full endpoint spec and response shapes
