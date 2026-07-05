@@ -57,4 +57,4 @@ const unlock = async (userId: string, achievementId: string): Promise<UnlockedAc
   return result.rows[0];
 };
 
-export { getUserAchievements, getAll, unlock };
+export { getUserAchievements, getAll, unlock, UserAchievement };
