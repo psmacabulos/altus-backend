@@ -11,8 +11,8 @@ Format: *As a [who], I want [what], so that [why].* Each story lists the steps t
 Phases 1–6 (server, Docker, CI/CD, database, seeding) appear nowhere below. That is not an oversight — they are **enablers**: a user never asked for Docker. They make story delivery possible, but deliver no story themselves. This explains the honest progress gap:
 
 ```
-Roadmap phases complete:   9 of 13   (69%)  ← effort spent  (Phases 1–9 done; 7b deferred)
-User stories delivered:    6 of 15   (40%)  ← value shipped  (US-01–03, US-05–07 on Heroku)
+Roadmap phases complete:   10 of 12   (83%)  ← effort spent  (Phases 1–10 done; 7b deferred)
+User stories delivered:    6 of 11    (55%)  ← value shipped  (US-01–03, US-05–07 on Heroku)
 ```
 
 Both numbers are true. Infrastructure-first was the right call — but from this point on, every phase ships stories, and this document tracks that.
@@ -107,68 +107,36 @@ Status: ✅ Delivered — merged to `main`, live on Heroku
 
 Steps: after each workout save → compare user totals against each achievement's `requirement_type`/`requirement_value` → insert newly crossed ones into `user_achievements` (never twice) → return them in the workout response
 
-Status: 🔨 Active — Phase 10, branch `feat/achievements`
+Status: 🔨 Code complete, tests passing — not yet merged to `main`/deployed
 
 ### US-09 — View my achievements
 > As a **user**, I want to see all badges I've earned, so that I can enjoy my collection and see what's still locked.
 
 Steps: `GET /v1/users/me/achievements` (protected) → user's earned achievements with badge data
 
-Status: 🔨 Active — Phase 10, branch `feat/achievements`
+Status: 🔨 Code complete, tests passing — not yet merged to `main`/deployed
 
 ---
 
-## 👤 Epic 4 — My Profile (Phase 11 · branch `feature/profile`)
+## 📊 Epic 4 — Competition (Phase 11 · branch `feature/leaderboard`)
 
-### US-10 — View my profile
-> As a **user**, I want to view my own profile, so that I can confirm my account details.
-
-Steps: `GET /v1/users/me` (protected) → profile from `req.user`, never the password hash
-
-Status: ⏳ Not started (Phase 11)
-
-### US-11 — Update my username
-> As a **user**, I want to change my username, so that my public identity stays under my control.
-
-Steps: `PUT /v1/users/me` (protected) → validate new username, reject if taken (UNIQUE), update, return updated profile
-
-Status: ⏳ Not started (Phase 11)
-
-### US-12 — See my stats
-> As a **user**, I want my totals (workouts, reps, calories), so that I can see the big picture of my effort.
-
-Steps: `GET /v1/users/me/stats` (protected) → aggregate queries over workout_sessions (live COUNT/SUM — Lesson 41)
-
-Status: ⏳ Not started (Phase 11)
-
-### US-13 — View someone's public profile
-> As **anyone**, I want to view a user's public profile, so that I can check out people I see on the leaderboard.
-
-Steps: `GET /v1/users/:id` (**public**) → public fields only (username, achievements, public stats) — no email, no ids of private data
-
-Status: ⏳ Not started (Phase 11)
-
----
-
-## 📊 Epic 5 — Competition (Phase 12 · branch `feature/leaderboard`)
-
-### US-14 — View the leaderboard
+### US-10 — View the leaderboard
 > As **anyone (even logged out)**, I want to see top scores, optionally filtered by exercise, so that I'm motivated to compete — and tempted to sign up.
 
 Steps: `GET /v1/leaderboard?exercise=squats` (**public**) → top 50 by score, joined with usernames and exercise names, optional `ILIKE` filter
 
-Status: ⏳ Not started (Phase 12)
+Status: ⏳ Not started (Phase 11)
 
 ---
 
-## 🛡️ Epic 6 — Trust (Phase 13 + ongoing · branch `feature/validation`)
+## 🛡️ Epic 5 — Trust (Phase 12 + ongoing · branch `feature/validation`)
 
-### US-15 — Always get a clear answer
+### US-11 — Always get a clear answer
 > As an **API consumer** (the frontend team), I want every bad request to return a consistent, clear error, so that I can build reliable error handling without guessing.
 
-Steps: validate request bodies on every endpoint (basic validation per-phase; final pass in Phase 13) → unknown routes get `404`, crashes get caught `500`, all errors share one `{ "error": "..." }` shape
+Steps: validate request bodies on every endpoint (basic validation per-phase; final pass in Phase 12) → unknown routes get `404`, crashes get caught `500`, all errors share one `{ "error": "..." }` shape
 
-Status: ⏳ Not started (Phase 13; partial delivery in every phase)
+Status: ⏳ Not started (Phase 12; partial delivery in every phase)
 
 ---
 
@@ -178,11 +146,10 @@ Status: ⏳ Not started (Phase 13; partial delivery in every phase)
 |---|---|---|---|---|
 | 1. Identity | US-01–04 | 3 (01, 02, 03) | — | ✅ Done · US-04 deferred |
 | 2. Working Out | US-05–07 | 3 (05, 06, 07) | — | ✅ Done |
-| 3. Motivation | US-08–09 | 0 | US-08, 09 | 🔨 Active — Phase 10 |
-| 4. My Profile | US-10–13 | 0 | — | ⏳ |
-| 5. Competition | US-14 | 0 | — | ⏳ |
-| 6. Trust | US-15 | 0 | — | ⏳ |
-| **Total** | **15** | **6 (40%)** | **2** | |
+| 3. Motivation | US-08–09 | 0 | US-08, 09 | 🔨 Code complete — pending merge |
+| 4. Competition | US-10 | 0 | — | ⏳ |
+| 5. Trust | US-11 | 0 | — | ⏳ |
+| **Total** | **11** | **6 (55%)** | **2** | |
 
 A story counts as **delivered** only when its endpoint works on the live Heroku app — merged to `main`, deployed, testable. Not when the code is written.
 
@@ -193,8 +160,9 @@ A story counts as **delivered** only when its endpoint works on the live Heroku 
 Verdict: **the roadmap covers every story above — no story is missing a phase, and no phase exists without a story.** Three findings to discuss as a team:
 
 1. **The `admin` role has no stories.** The schema defines `user_role AS ENUM ('user','admin')`, and Phase 8 filters on `exercises.is_active` — implying someone can deactivate an exercise. But no roadmap phase builds any admin endpoint (manage exercises, manage achievements). Either: (a) admin manages data directly via SQL for MVP — fine, but write that down; or (b) an admin epic is missing. **Decision needed.**
-2. **Phase 12's title is slightly misleading.** It's called "Leaderboard & Public Profiles," but the public profile endpoint (`GET /users/:id` → US-13) is actually built in Phase 11. Suggest renaming Phase 12 to just "Leaderboard" — one-word doc fix.
-3. **Branch-per-story vs branch-per-phase.** Recommendation: keep **one branch per epic/phase** (`feature/auth`, `feature/workouts`, ...) rather than per story. US-06 and US-08 share code (achievements are checked inside the workout save) — separate branches would conflict constantly. The roadmap's existing `feature/*` naming already matches this. Stories small enough to be a branch are already a phase.
+2. **Branch-per-story vs branch-per-phase.** Recommendation: keep **one branch per epic/phase** (`feature/auth`, `feature/workouts`, ...) rather than per story. US-06 and US-08 share code (achievements are checked inside the workout save) — separate branches would conflict constantly. The roadmap's existing `feature/*` naming already matches this. Stories small enough to be a branch are already a phase.
+
+**2026-07-05 update:** Epic 4 (My Profile — US-10 view profile, US-11 update username, US-12 stats, US-13 public profile) was cut for MVP. Profile/username data is already returned by `/auth/register` and `/auth/login`; workout totals overlap with `/workout_sessions/me` and `/users/me/achievements`, so a dedicated stats/profile phase added no new value at this stage. Former Phase 12 (Leaderboard) and Phase 13 (Validation) renumbered to Phase 11 and Phase 12.
 
 ---
 

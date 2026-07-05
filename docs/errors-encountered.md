@@ -648,3 +648,101 @@ Updated the subquery email to match the email used in `beforeAll`.
 
 **Prevention**  
 When changing a test email, update every reference to it in `afterAll` — both the session cleanup subquery and the user DELETE must use the same email.
+
+---
+
+## Achievement System — Phase 10
+
+---
+
+### ERR-028 — `syntax error at or near "ON"` on achievement unlock
+
+**Environment:** Local  
+**Where:** `src/models/achievement.model.ts` — `unlock()`
+
+**Error**
+```
+error: syntax error at or near "ON"
+```
+
+**Root Cause**  
+`RETURNING` was written before `ON CONFLICT` in the `INSERT`:
+```sql
+INSERT INTO user_achievements (user_id, achievement_id)
+VALUES ($1, $2) RETURNING user_id, achievement_id, unlocked_at
+ON CONFLICT DO NOTHING
+```
+Postgres requires a fixed clause order — `RETURNING` must come after `ON CONFLICT`, since it describes what to hand back only once the conflict has already been resolved.
+
+**Resolution**  
+Reordered to `VALUES` → `ON CONFLICT DO NOTHING` → `RETURNING`.
+
+**Prevention**  
+Same family of bug as JOIN-before-WHERE (learning-log-part2.md, SQL section) — SQL clauses aren't free-order.
+
+---
+
+### ERR-029 — `GET /v1/users/me/achievements` returns 404 despite controller/routes being correct
+
+**Environment:** Local  
+**Where:** `src/app.ts`
+
+**Error**
+```
+404 Cannot GET /v1/users/me/achievements
+```
+
+**Root Cause**  
+`app.ts` mounted the prefix with no router:
+```ts
+app.use('/v1/users/me');
+```
+No second argument, and the achievement router was never imported. Express accepted this silently — no crash, no warning — it just registered nothing.
+
+**Resolution**  
+Imported the router and passed it as the second argument: `app.use('/v1/users/me', achievementRouter);` (matching the existing `app.use('/v1/workout_sessions', workoutRouter)` pattern).
+
+**Prevention**  
+When a route "isn't there" and nothing looks obviously broken, check `app.ts` for both pieces — the import at the top *and* the router argument in `app.use()`. Either one missing produces the identical silent symptom.
+
+---
+
+### ERR-030 — `afterAll` FK violation reintroduced by a new feature's side effect
+
+**Environment:** Local  
+**Where:** `src/__tests__/workout.test.ts` — `afterAll`
+
+**Error**
+```
+error: update or delete on table "users" violates foreign key constraint "user_achievements_user_id_fkey" on table "user_achievements"
+```
+
+**Root Cause**  
+`afterAll` only deleted `workout_sessions` then `users` — correct for Phase 9, when `POST /workout_sessions` never wrote anywhere else. Phase 10 wired achievement evaluation into `saveSession()`, so that same endpoint now also inserts into `user_achievements`. The old cleanup didn't know that table existed, so `DELETE FROM users` failed while `user_achievements` rows still referenced it.
+
+**Resolution**  
+Added `DELETE FROM user_achievements WHERE user_id = (...)` before the existing `workout_sessions` and `users` deletes.
+
+**Prevention**  
+Whenever a new feature adds a write to a table an *existing* test's cleanup doesn't know about, that older test needs revisiting — passing before doesn't guarantee still-correct after a feature changes what its own endpoints write to.
+
+---
+
+### ERR-031 — Suite passes file-by-file but fails randomly when run together
+
+**Environment:** Local  
+**Command:** `npx jest` (full suite) vs `npx jest workout` / `npx jest achievements` (single file)
+
+**Error**
+```
+Expected: 201, Received: 401   (and similar, on whichever file "lost")
+```
+
+**Root Cause**  
+`workout.test.ts` and `achievements.test.ts` both registered a test user with the identical `email`/`username` in `beforeAll`. Jest runs separate test files in separate worker processes in parallel by default. Both `beforeAll` hooks raced to `INSERT` the same email; the `UNIQUE` constraint let only one succeed. The losing file's `register` call returned `409 Conflict` instead of `{ token, user }`, so `token` was `undefined`, and every subsequent request in that file got `401`.
+
+**Resolution**  
+Gave each test file a genuinely unique test user (different `email` and `username`).
+
+**Prevention**  
+A failure that disappears when run alone but reappears when the whole suite runs together is the signature of a race condition, not a logic bug — check for shared unique test data across files first.

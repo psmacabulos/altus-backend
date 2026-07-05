@@ -225,7 +225,7 @@ Take one of the difficulty `id` values — for example, the `id` from the "Mediu
 
 **What it tests:** An authenticated user saves a completed session. Score and calories are calculated server-side.  
 **Expected status:** `201 Created`  
-**Expected body:** `{ id, score, calories_burned, completed_at }` — note: no `new_achievements` field yet (Phase 10)
+**Expected body:** `{ id, score, calories_burned, completed_at, new_achievements }` — `new_achievements` is `[]` unless this session crossed a threshold (Phase 10)
 
 Replace `<exercise_difficulty_id>` with the UUID you copied from Step 2 above.
 
@@ -325,6 +325,7 @@ src/
     auth.test.ts          ← register, login, error cases
     exercise.test.ts      ← GET /exercises
     workout.test.ts       ← POST + GET /workout_sessions
+    achievements.test.ts  ← new_achievements on save, GET /users/me/achievements
 ```
 
 ### How a test is structured (concept)

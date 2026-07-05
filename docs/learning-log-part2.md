@@ -160,6 +160,90 @@ By keeping `app.ts` clean and portable, tests import it without triggering a ser
 
 This pattern is common enough that it has a name: the **app/server split**.
 
+### Model vs service function names aren't redundant, even when the service just wraps the model
+
+`achievement.model.ts` has `getUserAchievements(user_id)`. `achievement.service.ts` wraps it in `getMyAchievements(user_id)`, whose entire body is `return await getUserAchievements(user_id);`. That looks like pointless duplication — but the same shape already existed in Phase 9 (`getSessionsByUser` in the model, `getMyHistory` in the service) and is deliberate, not accidental.
+
+The **model** name describes the DB action generically: "given any `user_id`, fetch that user's rows." The **service** name describes the business capability specifically: "let the currently logged-in user see their own data" — tied to one exact route (`GET /users/me/achievements`) and one exact caller (`req.user.userId`, never an arbitrary id).
+
+The distinction earns its keep the moment a second feature needs the same query for a different reason — e.g. a future public-profile endpoint (`GET /users/:id/achievements`) could call the *same* model function but wrap it in a *different* service function (`getPublicAchievements`) that filters out secret badges. One model function, two different service names, because they serve two different business purposes even though the SQL is identical. If the service layer just mirrored the model's name, there'd be no natural place to attach that distinction later.
+
+---
+
+## Express
+
+### `app.use(path)` with no handler silently mounts nothing — it does not crash
+
+```ts
+app.use('/v1/users/me');  // ❌ missing the router argument
+```
+
+This compiles fine (`tsc` raises no error) and the server starts without any warning or crash. It just does nothing — no route under that path is ever registered. Confirmed by starting the app and requesting the intended endpoint directly: Express's own default handler responded with a plain `404 Cannot GET ...`, indistinguishable from a URL that was never meant to exist at all.
+
+The fix is always two pieces together, not one: import the router at the top of the file, and pass it as the second argument:
+```ts
+import achievementRouter from './routes/achievement.routes';
+// ...
+app.use('/v1/users/me', achievementRouter);
+```
+Compare to the working line right above it in `app.ts` — `app.use('/v1/workout_sessions', workoutRouter)` — same two-piece shape. A missing import and a missing second argument are two separate mistakes that produce the exact same silent symptom, so check both when a route "isn't there" and nothing looks obviously broken.
+
+---
+
+## JavaScript & TypeScript Fundamentals
+
+### Dot notation vs bracket notation — reading an object property by a variable name
+
+`obj.foo` and `obj["foo"]` do the exact same thing — bracket notation is the general form, dot notation is shorthand for when you already know the property name while typing the code. The difference that matters: whatever is inside `[ ]` gets *evaluated first*, and the result is used as the property name. That means the bracket can hold a variable:
+
+```js
+const car = { color: 'red', brand: 'Toyota' };
+
+car.color;        // "red" — dot notation, name typed directly
+car['color'];      // "red" — bracket notation, same result
+
+const key = 'color';
+car[key];          // "red" — same lookup, but the name comes from a variable
+```
+
+Change what `key` holds, and the same line of code reads a different field:
+
+```js
+let key = 'brand';
+car[key];          // "Toyota" — same line, different result, because key changed
+```
+
+This is the whole trick behind code like `stats[achievement.requirement_type]` (used in `achievement.service.ts`'s `evaluateAchievements`) — `achievement.requirement_type` is just a string variable holding something like `"session_count"`, so `stats[achievement.requirement_type]` is exactly `stats["session_count"]`, decided at runtime by whatever that string happens to be. No special syntax, no magic — it's the same rule as the `car` example, just with the key coming from a loop item instead of a hand-typed literal.
+
+**Why this replaces an if/else chain:** without it, matching each `requirement_type` to the right `Stats` field would need one `else if` per possible value, and every time a new `requirement_type` is added, that chain needs a matching new branch (and someone has to remember to add it). The bracket-notation version needs zero changes when a new type is added — it just works, because the property name was never hardcoded in the first place.
+
+### `keyof` and `as` type assertions are compile-time only — they vanish before the code runs
+
+Proven directly by compiling a real snippet with this project's TypeScript compiler:
+
+```ts
+// source .ts
+interface Stats {
+  session_count: number;
+  total_reps: number;
+  total_calories: number;
+}
+const stats: Stats = { session_count: 6, total_reps: 130, total_calories: 45.5 };
+const requirement_type: string = 'session_count';
+const userValue = stats[requirement_type as keyof Stats];
+```
+
+```js
+// compiled .js output — nothing left of the type layer
+const stats = { session_count: 6, total_reps: 130, total_calories: 45.5 };
+const requirement_type = 'session_count';
+const userValue = stats[requirement_type];
+```
+
+The `interface`, and the `as keyof Stats`, are both completely erased. This is the core thing to internalize about TypeScript: every type annotation is a compile-time-only proofreading pass — at runtime the code is 100% ordinary JavaScript, identical to what it would be without TypeScript at all.
+
+What that "proofreading" was actually checking: `keyof Stats` means *"the set of valid property names of `Stats`"* — here, only `'session_count' | 'total_reps' | 'total_calories'` are allowed. But a value typed as plain `string` (like a column pulled from the database) could theoretically be anything — TypeScript can't prove it'll only ever be one of those three words, so `stats[someString]` is normally rejected. `as keyof Stats` is a **type assertion**: a one-way promise from the developer to the compiler ("trust me, this will always be a real key of `Stats`"), not something the compiler verifies. If that promise is ever wrong — a typo, or a new `requirement_type` added without a matching `Stats` field — there's no compile error and no crash; the lookup just silently returns `undefined` at runtime, and whatever depended on it (e.g. an achievement threshold check) silently does the wrong thing.
+
 ---
 
 ## TypeScript Configuration
@@ -383,6 +467,22 @@ Tests are part of the definition of done for a feature — not a separate task a
 
 "The code works, I'll add tests later" is a debt that rarely gets paid.
 
+### A new feature's side effect can break an existing test file's cleanup
+
+`workout.test.ts`'s `afterAll` (Phase 9) only ever deleted `workout_sessions` then `users` — correct at the time, because `POST /workout_sessions` never wrote anywhere else. Once Phase 10 wired achievement evaluation into `saveSession()`, that same endpoint started also inserting into `user_achievements`. The old `afterAll` didn't know that table existed, so it tried `DELETE FROM users` while `user_achievements` rows still pointed at that user — a foreign key violation (`user_achievements_user_id_fkey`), crashing the `afterAll` hook itself (a different failure mode than a normal `it()` failing).
+
+Because `afterAll` crashed, the test's cleanup never completed — the user row and its `user_achievements` rows were left behind in the real database. The *next* run's `beforeAll` then tried to register that same email again, got `409 Conflict` instead of a fresh `{ token, user }`, and every subsequent request in that run failed with `401` (an undefined token, not a broken auth system) — a confusing symptom several steps downstream of the actual cause.
+
+**The fix and the general rule:** test cleanup must delete child rows before parent rows, mirroring the FK dependency order in the migrations (`006_create_user_achievements.sql` → `user_id REFERENCES users`). And whenever a new feature adds a write to a table an *existing* test's `afterAll` doesn't know about, that older test's cleanup needs revisiting — it's not automatically still correct just because it worked before the new feature existed.
+
+### Parallel test files racing on the same hardcoded unique value
+
+Two files (`workout.test.ts` and `achievements.test.ts`) both registered a test user with the identical `email`/`username` in `beforeAll`. Jest runs separate test *files* in separate worker processes **in parallel** by default, not one after another — so both `beforeAll` hooks fired at nearly the same moment, both tried to `INSERT` a user with the same email, and the `UNIQUE` constraint on `users.email` let only one succeed. Whichever file lost the race got `409 Conflict` back from `register` instead of `{ token, user }`, so `token` ended up `undefined` in that file, and every request in it failed with `401` — nondeterministically, flipping between which file "won" on different runs.
+
+**The diagnostic signature worth recognizing:** a bug that disappears when you run one test file at a time but reappears when the whole suite runs together is the signature of a **race condition** — two things touching shared state at the same time — not a deterministic logic bug. A real logic bug fails the same way regardless of what else is running; a race only shows up under concurrency. That single observation ("fails together, passes alone") points straight at "something is shared between files that shouldn't be" before reading a single line of code.
+
+**The fix:** every test file must use a genuinely unique `email`/`username` for its test user — this is what `DEVELOPMENT.md`'s "Tests are independent across files" promise actually depends on. It only holds if the data each file creates doesn't collide with another file's data.
+
 ---
 
 ## Database Seeding
@@ -479,6 +579,14 @@ interface UserAchievement extends Achievement {
 ```
 
 `UserAchievement extends Achievement` avoids repeating every field. The `unlocked_at` comes from the `user_achievements` join, not the `achievements` table itself.
+
+### Empty array, not `null`, for a collection endpoint with nothing to return
+
+`getMyAchievements` returns `Promise<UserAchievement[]>`, never `UserAchievement[] | null`, even though a brand-new user genuinely has zero unlocked achievements. This is correct, not an oversight.
+
+Postgres mechanically cannot return `null` for `result.rows` — zero matching rows means `result.rows` is `[]`, still an array, just empty. There's no code path that could produce `null` here at all.
+
+More generally: a **collection** endpoint ("how many achievements does this user have") represents "nothing here" as `[]` — an honest, complete answer, no special case needed. A **single-resource** lookup by id ("does difficulty X exist") represents "not found" as `null`, because existence is a real yes/no question the caller needs to branch on (`findDifficultyById` does this correctly, throwing `404` on `null`). `getSessionsByUser` already returns `[]` for a new user with zero workouts, with zero special-casing anywhere that consumes it — same shape as achievements. Returning `null` instead of `[]` would force every caller to add an `if (data) { ... } else { ... }` branch for a case that isn't actually exceptional; `[]` can just be `.map()`'d over directly.
 
 ---
 
