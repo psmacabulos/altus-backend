@@ -51,9 +51,10 @@ npx jest <filename>   e.g. npx jest workout
 **Test files:**
 ```
 src/__tests__/
-  auth.test.ts       POST /v1/auth/register, POST /v1/auth/login
-  exercise.test.ts   GET /v1/exercises
-  workout.test.ts    POST /v1/workout_sessions, GET /v1/workout_sessions/me
+  auth.test.ts         POST /v1/auth/register, POST /v1/auth/login
+  exercise.test.ts     GET /v1/exercises
+  workout.test.ts      POST /v1/workout_sessions, GET /v1/workout_sessions/me
+  achievements.test.ts POST /v1/workout_sessions (new_achievements), GET /v1/users/me/achievements
 ```
 
 **Config:** `jest.config.ts` at project root — `preset: ts-jest`, `testEnvironment: node`
@@ -67,36 +68,12 @@ src/__tests__/
 
 ---
 
-## Current state — as of 2026-06-30
-
-**Where we are:** Phase 9 is done and merged to `main`. Phase 10 has not started yet.
-
-```
-Phases 1–9  ✅ Done and on main, deployed to Heroku
-Phase 7b    ⏸ Deferred (Google OAuth)
-Phase 10    🔨 Active — Achievement System — NOT YET STARTED
-```
-
-**What was just completed (Phase 9):**
-- Workout sessions endpoints: `POST /v1/workout_sessions`, `GET /v1/workout_sessions/me`
-- Automated integration tests (14 tests) — auth, exercises, workout sessions all green
-- App/server split: `src/app.ts` (Express app) vs `src/index.ts` (server start)
-
-**To pick up on a new machine:**
-1. `git pull origin main` — get the latest
-2. `docker compose up -d` — start Postgres
-3. `npm test` — verify all 14 tests still pass
-4. Create the Phase 10 branch: `git checkout -b feat/achievements`
-
-**Phase 10 — Achievement System — what to build next:**
-- `src/models/achievement.model.ts` — `getAll()`, `getUserAchievements()`, `unlock()`
-- `src/services/achievement.service.ts` — `evaluateAchievements()` (called from workout.service after saving)
-- `src/controllers/achievement.controller.ts` — `handleGetMyAchievements()`
-- `src/routes/achievement.routes.ts` — `GET /v1/users/me/achievements`
-- Seed the 13 achievements into `src/db/seed.ts`
-- Wire `checkAchievements()` into `workout.service.ts` (stub already there, Phase 9 deferred it)
-
-See `docs/backend-roadmap.md` Phase 10 section for the full checklist and achievement seed table.
+## Current state
+- Phases 1–9 complete and merged to `main` — deployed to Heroku
+- Phase 7b (Google OAuth) deferred
+- Phase 10 (Achievement System) code-complete, all tests passing on `feat/achievements` — not yet merged to `dev`/`main`
+- Automated tests written for all current endpoints (auth, exercises, workout sessions, achievements)
+- **Next: Phase 11 — Leaderboard**
 
 ## Branch strategy
 ```
@@ -111,7 +88,9 @@ feat/* → one branch per phase (current: merge feat/exercises → dev → main)
 - Score and calories calculated server-side only — frontend never sends a score
 - JWT payload: `{ userId }` only — 7 day expiry
 - Logout is client-side only for MVP — no blacklist needed
-- `AppError` class lives in `auth.service.ts` for now — move to shared utils in Phase 13
+- `AppError` class lives in `auth.service.ts` for now — move to shared utils in Phase 12
+- Achievement evaluation happens synchronously inside `saveSession()`, on every workout save — never lazily on `GET /users/me/achievements` (that endpoint is a pure read, no side effects)
+- Collection endpoints (`getMyAchievements`, `getSessionsByUser`, etc.) return `[]` for "nothing here" — never `null`
 
 ## Key docs
 - `docs/API-specifications.md` — full endpoint spec and response shapes

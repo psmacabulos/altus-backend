@@ -1,18 +1,21 @@
+import { AppError } from './auth.service';
 import {
   createSession,
   getSessionsByUser,
   findDifficultyById,
   WorkoutSession,
   WorkoutHistoryRow,
+  getAllUserStats,
 } from '../models/workout.model';
-import { AppError } from './auth.service';
+import { evaluateAchievements } from './achievement.service';
+import { UserAchievement } from '../models/achievement.model';
 
 const saveSession = async (
   exercise_difficulty_id: string,
   reps_completed: number,
   user_id: string,
   duration_seconds: number
-): Promise<WorkoutSession> => {
+): Promise<WorkoutSession & { new_achievements: UserAchievement[] }> => {
   const difficulty = await findDifficultyById(exercise_difficulty_id);
   if (!difficulty) {
     throw new AppError('Non-existent exercise difficulty id', 404);
@@ -28,7 +31,9 @@ const saveSession = async (
     duration_seconds,
     calories_burned,
   });
-  return session;
+  const stats = await getAllUserStats(user_id);
+  const new_achievements = await evaluateAchievements(user_id, stats);
+  return { ...session, new_achievements };
 };
 
 const getMyHistory = async (user_id: string): Promise<WorkoutHistoryRow[]> => {

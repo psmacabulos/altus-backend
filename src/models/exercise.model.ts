@@ -58,7 +58,7 @@ const getAllExercises = async (): Promise<Exercise[]> => {
     });
   }
 
-  // Reshape the flate rows -> nested objects
+  // Reshape the flat rows -> nested objects
   // Based on the API specs, getting all exercises should return the following format:
   /*
 [

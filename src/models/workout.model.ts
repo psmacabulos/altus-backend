@@ -26,6 +26,11 @@ interface WorkoutHistoryRow {
   calories_burned: number;
   completed_at: Date;
 }
+interface Stats {
+  session_count: number;
+  total_reps: number;
+  total_calories: number;
+}
 
 const createSession = async ({
   user_id,
@@ -37,20 +42,20 @@ const createSession = async ({
 }: CreateSessionInput): Promise<WorkoutSession> => {
   const result = await pool.query<WorkoutSession>(
     `
-        INSERT INTO workout_sessions(user_id, exercise_difficulty_id, reps_completed, score, duration_seconds, calories_burned)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, score, calories_burned, completed_at`,
+    INSERT INTO workout_sessions(
+    user_id, exercise_difficulty_id, reps_completed, score, duration_seconds, calories_burned)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id, score, calories_burned, completed_at`,
     [user_id, exercise_difficulty_id, reps_completed, score, duration_seconds, calories_burned]
   );
   return result.rows[0];
 };
 
 const getSessionsByUser = async (user_id: string): Promise<WorkoutHistoryRow[]> => {
-  // The returned value will be coming from 3 tables:
-  // workout_session, exercise, and exercise_difficulties
   const result = await pool.query<WorkoutHistoryRow>(
     `
-    SELECT w.id, e.name AS exercise, ed.level_name AS difficulty, w.reps_completed, w.score,w.duration_seconds, w.calories_burned, w.completed_at
+    SELECT w.id, e.name AS exercise, ed.level_name AS difficulty, w.reps_completed,
+    w.score,w.duration_seconds, w.calories_burned, w.completed_at
     FROM workout_sessions w
     JOIN exercise_difficulties ed
     ON ed.id = w.exercise_difficulty_id
@@ -79,4 +84,25 @@ const findDifficultyById = async (id: string): Promise<CalculationRequirement | 
   );
   return result.rows[0] ?? null;
 };
-export { createSession, getSessionsByUser, findDifficultyById, WorkoutSession, WorkoutHistoryRow };
+
+const getAllUserStats = async (userId: string): Promise<Stats> => {
+  const result = await pool.query(
+    `SELECT
+  COUNT(*) AS session_count,
+  COALESCE(SUM(reps_completed), 0) AS total_reps,
+  COALESCE(SUM(calories_burned), 0) AS total_calories
+  FROM workout_sessions
+  WHERE user_id = $1`,
+    [userId]
+  );
+  return result.rows[0];
+};
+export {
+  createSession,
+  getSessionsByUser,
+  findDifficultyById,
+  WorkoutSession,
+  WorkoutHistoryRow,
+  Stats,
+  getAllUserStats,
+};

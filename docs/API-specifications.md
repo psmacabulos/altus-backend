@@ -45,10 +45,8 @@ Authenticated user
   └─ Achievements checked automatically after save
 
 Profile page
-  └─ GET /users/me → own profile
   └─ GET /workout_sessions/me → exercise history
   └─ GET /users/me/achievements → unlocked achievements
-  └─ GET /users/me/stats → summary statistics
 
 Leaderboard (public)
   └─ GET /leaderboard → top 50 global
@@ -302,7 +300,9 @@ This prevents score manipulation — a tampered request body cannot change the s
     {
       "id": "uuid",
       "name": "First Workout",
-      "description": "Complete your first workout session"
+      "description": "Complete your first workout",
+      "badge_image": null,
+      "unlocked_at": "2025-06-01T10:30:00.000Z"
     }
   ]
 }
@@ -310,7 +310,7 @@ This prevents score manipulation — a tampered request body cannot change the s
 
 `new_achievements` is always an array — empty `[]` when no new achievements were unlocked. The frontend uses this to show a badge popup after a session.
 
-**Errors:** `400` missing or invalid fields — `404` exercise difficulty not found
+> After saving, the backend checks whether the user has unlocked any new achievements. This happens automatically — no separate API call is needed from the frontend. `new_achievements` is always present, as an empty array `[]` when nothing new was unlocked — never omitted or `null`.
 
 ---
 
@@ -336,86 +336,17 @@ This prevents score manipulation — a tampered request body cannot change the s
 
 ---
 
-## Users API
+## Achievements API
 
 | Method | Endpoint | Auth Required | Description |
 |---|---|---|---|
-| GET | `/users/me` | Yes 🔒 | Fetch the authenticated user's full profile |
-| PUT | `/users/me` | Yes 🔒 | Update the authenticated user's profile |
-| GET | `/users/me/stats` | Yes 🔒 | Fetch the authenticated user's workout statistics |
 | GET | `/users/me/achievements` | Yes 🔒 | Fetch the authenticated user's unlocked achievements |
-| GET | `/users/:id` | No | Fetch a user's public profile *(deferred — not needed for core gameplay)* |
-
-> **Route order note:** `/users/me` must be registered before `/users/:id` in the routes file. Express matches routes top-to-bottom — if `/:id` is first, the word `me` is treated as an id parameter and the `/me` route never runs.
-
----
-
-### GET `/users/me`
-
-🔒 Requires valid JWT. Returns the full profile for the logged-in user.
-
-**Response — `200 OK`**
-```json
-{
-  "id": "uuid",
-  "username": "player1",
-  "email": "player@example.com",
-  "google_id": null,
-  "role": "user",
-  "created_at": "2025-01-01T00:00:00.000Z",
-  "updated_at": "2025-01-01T00:00:00.000Z"
-}
-```
-
----
-
-### PUT `/users/me`
-
-🔒 Requires valid JWT. All fields are optional — only send what is changing.
-
-**Request Body**
-
-| Field | Type | Validation |
-|---|---|---|
-| username | string | Max 50 characters, unique |
-
-**Response — `200 OK`** — returns the full updated user profile
-```json
-{
-  "id": "uuid",
-  "username": "newname",
-  "email": "player@example.com",
-  "google_id": null,
-  "role": "user",
-  "created_at": "2025-01-01T00:00:00.000Z",
-  "updated_at": "2025-01-01T00:00:00.000Z"
-}
-```
-
-**Errors:** `400` invalid fields — `409` username already taken
-
----
-
-### GET `/users/me/stats`
-
-🔒 Requires valid JWT. Returns the authenticated user's workout statistics, calculated live from the `workout_sessions` table.
-
-**Response — `200 OK`**
-```json
-{
-  "total_sessions": 42,
-  "total_reps": 1250,
-  "total_calories_burned": 380.50,
-  "best_score": 980,
-  "most_played_exercise": "Squats"
-}
-```
 
 ---
 
 ### GET `/users/me/achievements`
 
-🔒 Requires valid JWT. Returns all achievements unlocked by the authenticated user.
+🔒 Requires valid JWT. Returns all achievements unlocked by the authenticated user — an empty array `[]`, never `null`, if none are unlocked yet.
 
 **Response — `200 OK`**
 ```json
@@ -423,7 +354,7 @@ This prevents score manipulation — a tampered request body cannot change the s
   {
     "id": "uuid",
     "name": "First Workout",
-    "description": "Complete your first workout session",
+    "description": "Complete your first workout",
     "badge_image": null,
     "unlocked_at": "2025-06-01T10:30:00.000Z"
   }

@@ -5,9 +5,9 @@ This is a living document — update it as the project evolves.
 
 ---
 
-## 🎯 Current Target — Phase 10: Achievement System
+## 🎯 Current Target — Phase 11: Leaderboard
 
-Phase 9 (Workout Sessions + Automated Tests) is complete and merged to main. Phase 10 is the active focus.
+Phase 10 (Achievement System) is complete — model, service, controller, routes, and tests all passing. Phase 11 is the active focus.
 
 ```
 Phases 1–6   ✅ Done     Setup, server, Docker, CI/CD, database, seed data
@@ -16,7 +16,8 @@ Phase 7a     ✅ Done     Email + password auth — register, login, JWT middlew
 Phase 7b     ⏸ Deferred  Google OAuth (skipped for now)
 Phase 8      ✅ Done     Exercises Endpoint
 Phase 9      ✅ Done     Workout Sessions + Automated Integration Tests
-Phase 10     🔨 Active   Achievement System
+Phase 10     ✅ Done     Achievement System
+Phase 11     🔨 Active   Leaderboard
 ```
 
 ---
@@ -50,7 +51,7 @@ Each phase below notes when a new CI step is added.
 After Phase 2  →  Level 1: lint check on every push
 After Phase 3  →  Level 2: + TypeScript build check
 After Phase 7  →  Level 3: + automated tests for auth endpoints
-After Phase 12 →  Level 4: + full test suite on PR to main
+After Phase 11 →  Level 4: + full test suite on PR to main
 ```
 
 | Level | Trigger | Steps | Purpose |
@@ -62,7 +63,7 @@ After Phase 12 →  Level 4: + full test suite on PR to main
 
 ---
 
-## 📊 Progress Overview — ~70% complete (Phase 9 done, Phase 10 active)
+## 📊 Progress Overview — ~83% complete (Phase 10 done, Phase 11 active)
 
 ```
 Phase 1  ████████████████████  ✅ Done          Setup & Tooling
@@ -76,10 +77,9 @@ Phase 7a ████████████████████  ✅ Done 
 Phase 7b ████████████████████  ⏸ Deferred       Auth — Google OAuth
 Phase 8  ████████████████████  ✅ Done          Exercises Endpoint
 Phase 9  ████████████████████  ✅ Done          Workout Sessions + Automated Tests
-Phase 10 ░░░░░░░░░░░░░░░░░░░░  🔨 Active         Achievement System  ← current
-Phase 11 ░░░░░░░░░░░░░░░░░░░░  ⏳ Upcoming       User Profile
-Phase 12 ░░░░░░░░░░░░░░░░░░░░  ⏳ Upcoming       Leaderboard & Public Profiles
-Phase 13 ░░░░░░░░░░░░░░░░░░░░  ⏳ Upcoming       Validation & Error Handling
+Phase 10 ████████████████████  ✅ Done          Achievement System
+Phase 11 ░░░░░░░░░░░░░░░░░░░░  🔨 Active         Leaderboard  ← current
+Phase 12 ░░░░░░░░░░░░░░░░░░░░  ⏳ Upcoming       Validation & Error Handling
 ```
 
 ---
@@ -344,16 +344,17 @@ POST /v1/workout_sessions
 
 ---
 
-## 🏆 Phase 10 — Achievement System
+## 🏆 Phase 10 — Achievement System  ✅ Done
 > Goal: Achievements unlock automatically after saving a workout. Users can fetch their earned badges.
 
-- [ ] `src/models/achievement.model.ts` — `getAll()`, `getUserAchievements()`, `unlock()`
-- [ ] `src/services/achievement.service.ts` — `evaluateAchievements()` compares stats to thresholds
-- [ ] `src/controllers/achievement.controller.ts` — `handleGetMyAchievements()`
-- [ ] `src/routes/achievement.routes.ts` — `GET /v1/users/me/achievements` (protected)
-- [ ] Mount in `src/app.ts`
-- [ ] Seed achievements table with the 13 agreed achievements (see table below)
-- [ ] Test: first workout → `new_achievements` includes "First Workout" → GET achievements → appears in list
+- [x] `src/models/achievement.model.ts` — `getAll()`, `getUserAchievements()`, `unlock()`
+- [x] `src/models/workout.model.ts` — `getAllUserStats()` (live `COUNT`/`SUM` aggregate over `workout_sessions`, used to evaluate thresholds)
+- [x] `src/services/achievement.service.ts` — `evaluateAchievements()` compares stats to thresholds, `getMyAchievements()`
+- [x] `src/services/workout.service.ts` — `saveSession()` calls `evaluateAchievements()` after saving, returns `new_achievements`
+- [x] `src/controllers/achievement.controller.ts` — `handleGetMyAchievements()`
+- [x] `src/routes/achievement.routes.ts` — `GET /v1/users/me/achievements` (protected)
+- [x] Mount in `src/app.ts` at `/v1/users/me`
+- [x] Test: first workout → `new_achievements` includes "First Workout" → GET achievements → appears in list — `src/__tests__/achievements.test.ts`
 
 ```
 Achievement evaluation (inside workout.service, after saving):
@@ -383,23 +384,7 @@ Achievement evaluation (inside workout.service, after saving):
 
 ---
 
-## 👤 Phase 11 — User Profile
-> Goal: Users can view and update their own profile, workout history, and stats.
-
-- [ ] `src/models/user.model.ts` — add `updateUsername()`, `getStatsByUser()`
-- [ ] `src/services/user.service.ts` — `getProfile()`, `updateProfile()`, `getStats()`
-- [ ] `src/controllers/user.controller.ts` — one handler per endpoint
-- [ ] `src/routes/user.routes.ts`
-  - [ ] `GET  /v1/users/me` (protected)
-  - [ ] `PUT  /v1/users/me` (protected)
-  - [ ] `GET  /v1/users/me/stats` (protected)
-  - [ ] `GET  /v1/users/:id` (public)
-- [ ] Mount in `src/index.ts`
-- [ ] Test: update username → GET /users/me reflects the change
-
----
-
-## 📊 Phase 12 — Leaderboard & Public Profiles
+## 📊 Phase 11 — Leaderboard
 > Goal: Anyone can view the leaderboard, optionally filtered by exercise.
 
 - [ ] `src/models/leaderboard.model.ts` — `getTopScores(exerciseName?)`
@@ -432,7 +417,7 @@ Update `ci.yml` for PRs to `main`:
 
 ---
 
-## 🛡️ Phase 13 — Validation & Global Error Handling
+## 🛡️ Phase 12 — Validation & Global Error Handling
 > Goal: Every bad request gets a clean, consistent error. Every crash is caught.
 
 > Note: basic validation is added in each phase as endpoints are built.
@@ -464,7 +449,7 @@ Middleware order in src/index.ts:
 
 ---
 
-## 🔁 The Pattern You Will Repeat (Phases 7–12)
+## 🔁 The Pattern You Will Repeat (Phases 7–11)
 
 Every feature is built as four files in the same structure:
 
