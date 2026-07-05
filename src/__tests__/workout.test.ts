@@ -18,6 +18,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await pool.query(
+    'DELETE FROM user_achievements WHERE user_id = (SELECT id FROM users WHERE email = $1)',
+    ['workoutz@gmail.com']
+  );
+  await pool.query(
     'DELETE FROM workout_sessions WHERE user_id = (SELECT id FROM users WHERE email = $1)',
     ['workoutz@gmail.com']
   );
@@ -40,6 +44,7 @@ describe('POST /v1/workout_sessions', () => {
     expect(res.body.id).toBeDefined();
     expect(res.body.score).toBeDefined();
     expect(res.body.calories_burned).toBeDefined();
+    expect(res.body.new_achievements).toBeDefined();
   });
 
   it('returns 404 for a fake difficulty_id', async () => {
