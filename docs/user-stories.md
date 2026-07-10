@@ -94,7 +94,7 @@ Status: ✅ Delivered — merged to `main`, live on Heroku
 ### US-07 — See my workout history
 > As a **logged-in user**, I want to see my past workouts, so that I can track my progress over time.
 
-Steps: `GET /v1/workout_sessions/me` (protected) → sessions for `req.user` id, newest first
+Steps: `GET /v1/workout_sessions/me` (protected) → `{ sessions, stats }` for `req.user` id, sessions newest first, `stats` reused from the achievement-evaluation aggregate (Phase 10) so the frontend doesn't need to re-total the list itself
 
 Status: ✅ Delivered — merged to `main`, live on Heroku
 

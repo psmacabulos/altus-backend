@@ -483,6 +483,14 @@ Two files (`workout.test.ts` and `achievements.test.ts`) both registered a test 
 
 **The fix:** every test file must use a genuinely unique `email`/`username` for its test user — this is what `DEVELOPMENT.md`'s "Tests are independent across files" promise actually depends on. It only holds if the data each file creates doesn't collide with another file's data.
 
+### `toBeDefined()` proves a field exists; it proves nothing about its type or value
+
+`workout.test.ts`'s `GET /v1/workout_sessions/me` test originally only checked `expect(res.body.stats.session_count).toBeDefined()`. That passes whether `session_count` is `1` (a number, matching the documented API contract) or `"1"` (a string, silently violating it) — `toBeDefined()` only asserts "not `undefined`," nothing more.
+
+Tightening the same test to `expect(res.body.stats.session_count).toBe(1)` — a strict equality check against the exact expected value, using data whose value was already known from an earlier test in the same file (`reps_completed: 10` sent in the `POST` test just above it) — immediately surfaced that Postgres was returning a string, not a number (see the `node-postgres` string-coercion lesson above).
+
+**The general rule:** a test that only checks a value's existence or shape (`toBeDefined()`, `Array.isArray()`) catches far fewer bugs than a test that checks its exact expected value, whenever that expected value is knowable in advance from the test's own setup. Existence checks still earn their keep when the exact value is genuinely unpredictable (a generated UUID, a timestamp) — but reach for exact-value assertions whenever the setup already determines what the answer should be.
+
 ---
 
 ## Database Seeding
@@ -588,6 +596,14 @@ Postgres mechanically cannot return `null` for `result.rows` — zero matching r
 
 More generally: a **collection** endpoint ("how many achievements does this user have") represents "nothing here" as `[]` — an honest, complete answer, no special case needed. A **single-resource** lookup by id ("does difficulty X exist") represents "not found" as `null`, because existence is a real yes/no question the caller needs to branch on (`findDifficultyById` does this correctly, throwing `404` on `null`). `getSessionsByUser` already returns `[]` for a new user with zero workouts, with zero special-casing anywhere that consumes it — same shape as achievements. Returning `null` instead of `[]` would force every caller to add an `if (data) { ... } else { ... }` branch for a case that isn't actually exceptional; `[]` can just be `.map()`'d over directly.
 
+### Bundling an aggregate into a list endpoint instead of asking the frontend to re-derive it
+
+`GET /workout_sessions/me` originally returned a bare array of session rows. The frontend also needed running totals (session count, total reps, total calories) for a profile page — which meant either summing the array client-side (duplicate logic that has to stay in sync with whatever the backend calculates) or exposing an aggregate the backend already computes.
+
+`getAllUserStats()` already existed, built for a different purpose (Phase 10's achievement threshold checks). Rather than write a second aggregation query, `getMyHistory()` in `workout.service.ts` calls both `getSessionsByUser()` and `getAllUserStats()` and returns `{ sessions, stats }`. No new SQL, no new aggregation logic — just exposing an existing internal computation to a second caller.
+
+**The tradeoff:** changing a bare array to a wrapped object is a breaking response-shape change for every existing caller. Worth it here because the array had exactly one consumer (this project's own frontend, not yet built for this screen) — a public API with existing external clients would need a versioned endpoint or an additive field instead of restructuring the root shape.
+
 ---
 
 ## SQL
@@ -618,6 +634,25 @@ When a conflict fires and `DO NOTHING` skips the insert, `RETURNING` has nothing
 This matters for the function's return type. A signature like `Promise<Achievement>` (non-optional) is a lie if the row can legitimately be absent — the caller has no compiler-enforced reminder that "already unlocked" is a real, expected outcome, not an edge case to ignore. The honest signature is `Promise<Achievement | undefined>` (or similar), which forces every caller to handle "nothing happened" explicitly.
 
 This distinction is exactly what `evaluateAchievements()` needs to build the `new_achievements` array (Phase 10) — it has to tell "just unlocked this workout" apart from "already had it," and that's only possible if `unlock()`'s return value can honestly express both cases.
+
+### `node-postgres` returns `bigint` and `numeric` columns as strings, not numbers — even when TypeScript says otherwise
+
+`COUNT(*)` returns a Postgres `bigint`. `SUM()` over an `integer` column also returns `bigint`; `SUM()` over a `DECIMAL`/`numeric` column returns `numeric`. `node-postgres` deliberately returns both as JavaScript strings, never numbers — a `bigint` can exceed `Number.MAX_SAFE_INTEGER`, so silently converting to a JS `number` could lose precision. This is documented driver behaviour, not a bug.
+
+`workout.model.ts`'s `Stats` interface declares `session_count`, `total_reps`, `total_calories` all as `number` — but the raw query result had them as `"1"`, `"10"`, `"13.44"` (strings) at runtime. TypeScript never caught the mismatch, because it trusts the interface annotation rather than checking what the driver actually returns — type annotations are compile-time only (see the `keyof Stats` lesson above) and have no way to verify a claim against runtime driver behaviour.
+
+**How it surfaced:** a Jest assertion `expect(res.body.stats.session_count).toBe(1)` failed with `Received: "1"` — a *strict* equality check, not a loose `toBeDefined()`, is what caught it.
+
+**The fix:** cast in the SQL itself, at the query producing the wrong type:
+```sql
+SELECT
+  COUNT(*)::int AS session_count,
+  COALESCE(SUM(reps_completed), 0)::int AS total_reps,
+  COALESCE(SUM(calories_burned), 0)::float AS total_calories
+FROM workout_sessions
+WHERE user_id = $1
+```
+`total_calories` specifically needs `::float`, not `::int` — `calories_burned` is `DECIMAL(5,2)`, so casting it to `::int` would silently truncate `13.44` down to `13`, a different bug in the opposite direction from the one just fixed. Converting with `Number(...)` in JS after the query, or a global `pg` type parser in `config/db.ts`, both also work — but casting in SQL keeps the fix scoped to the exact query with the problem instead of a blanket driver-wide setting.
 
 ---
 
@@ -664,3 +699,48 @@ The **Better Comments** VS Code extension (Aaron Bond) colour-codes comments by 
 | `// //` | Grey strikethrough | Removed or skipped code |
 
 Use `// TODO` for planning (orange stands out while you work). Use `// !` when a constraint is easy to miss. Delete all TODOs before committing — they are working notes, not permanent comments.
+
+---
+
+## Git Workflow
+
+### Local branches vs remote-tracking branches — why `dev` and `origin/dev` can point at different commits
+
+A local branch (`dev`) and its remote-tracking counterpart (`origin/dev`) are two separate pointers, even though they usually point at the same commit. `origin/dev` is not a live view of GitHub — it's a cached snapshot of where `dev` was on GitHub the last time this machine ran `git fetch`, `git pull`, or `git push`. If the real `dev` moves forward on GitHub (a merged PR, a teammate's push) and this machine hasn't talked to the remote since, `origin/dev` here is stale until the next fetch.
+
+`HEAD` is a third, separate concept: a pointer to whichever branch is currently checked out. `HEAD -> dev` means "you are on `dev`, and `dev` currently points at this commit." Checking out a different branch moves `HEAD`, not the commit itself.
+
+### `git pull` refuses to fast-forward over uncommitted changes, even in a non-conflicting part of the same file
+
+Running `git pull origin dev` with an uncommitted edit to `docs/API-specifications.md` failed with `Your local changes... would be overwritten by merge`, even though the incoming remote commit touched a completely different line range of that same file than the uncommitted edit did. Git's fast-forward safety check is conservative at the *file* level, not the *line* level — any uncommitted modification to a file the incoming commit also touches blocks the pull outright, regardless of whether the actual changes would have merged cleanly.
+
+**The fix:** `git stash push -u -m "..."` to shelve the uncommitted change, `git pull` to fast-forward cleanly, then `git stash pop` to reapply the stashed change on top. Since the two edits were in different sections of the file, the stash pop merged automatically with no conflict markers.
+
+### Merging into `main` does not propagate to `dev` — branches never sync themselves
+
+After merging a feature branch's PR directly into `main` (skipping the usual `feature → dev → main` flow), `dev` was left two commits behind `main` — a merge (whether `git merge` locally or a GitHub PR merge) only ever updates the *target* branch of that specific merge. There is no automatic mechanism that keeps sibling branches in sync; `dev` and `main` only converge when something explicitly merges one into the other.
+
+**Why this repo specifically cares:** [ci.yml](../.github/workflows/ci.yml) deploys straight to Heroku production on every push to `main`, gated only on lint/typecheck — not on the change having gone through `dev` first as a staging step. Merging a feature branch directly into `main` bypasses whatever `dev` was meant to provide as a checkpoint before production.
+
+**The fix — this repo had already done it once before** (commit `23c2475`, `"Merge branch 'main' into dev"`): `git checkout dev`, `git fetch origin`, `git merge origin/main`, `git push origin dev`. Since `dev`'s tip was already an ancestor of `main`'s tip (nothing unique on `dev` that `main` didn't also have), this merge was a fast-forward — see below.
+
+### Fast-forward vs. a real merge — what decides which happens, and who "wins" a conflict
+
+A **fast-forward** happens when the branch being updated has no commits that the branch being merged in doesn't already contain — Git just moves the pointer forward, no new commit is created. A **real merge** happens when both branches have commits the other lacks; Git creates a new merge commit combining both histories.
+
+During a real merge, Git auto-combines every non-overlapping change from both sides. It only stops and asks for help on lines **changed differently on both branches at the same location** — those are marked as conflicts and require manually editing the file to choose (or combine) the correct version, then `git add` + `git commit` to complete the merge. There is no default "the branch I'm merging from always wins" behaviour — both sides are combined wherever possible, and only genuine overlaps need a human decision. (Force-one-side-wins flags like `git merge -X theirs` exist but are opt-in, never automatic.)
+
+### Testing a merge locally before making it permanent
+
+A merge is entirely local until `git push` — nothing reaches GitHub, and nothing is visible to anyone else, before that push. This gives a safe window to verify a merge actually works before finalising it, which matters because a bad merge that goes straight to push with no test step in between is how regressions ship unnoticed (traced back to a real incident where a frontend merge introduced a bug that reached `main` before anyone tested it).
+
+```bash
+git checkout dev && git pull origin dev        # start from a known-clean, up-to-date dev
+git merge --no-commit --no-ff feat/some-branch # apply the merge, but stop before committing it
+# run npm test, start the server, click through the feature manually
+git commit           # good → finalize the merge locally (still not pushed)
+git merge --abort    # bad → cancel completely, dev is untouched, no cleanup needed
+git push origin dev  # only once confident — this is the actual "finalize to origin" step
+```
+
+For zero risk to the real `dev` branch even during testing (not just before pushing), do the same steps on a disposable branch (`git checkout -b test-merge dev`) instead — delete it with `git branch -D test-merge` if the merge fails, or repeat the merge for real on `dev` once proven.
