@@ -6,9 +6,15 @@ import {
   WorkoutSession,
   WorkoutHistoryRow,
   getAllUserStats,
+  Stats,
 } from '../models/workout.model';
 import { evaluateAchievements } from './achievement.service';
 import { UserAchievement } from '../models/achievement.model';
+
+interface WorkoutStats {
+  sessions: WorkoutHistoryRow[];
+  stats: Stats;
+}
 
 const saveSession = async (
   exercise_difficulty_id: string,
@@ -36,7 +42,9 @@ const saveSession = async (
   return { ...session, new_achievements };
 };
 
-const getMyHistory = async (user_id: string): Promise<WorkoutHistoryRow[]> => {
-  return await getSessionsByUser(user_id);
+const getMyHistory = async (user_id: string): Promise<WorkoutStats> => {
+  const sessions = await getSessionsByUser(user_id);
+  const stats = await getAllUserStats(user_id);
+  return { sessions, stats };
 };
-export { saveSession, getMyHistory };
+export { saveSession, getMyHistory, WorkoutStats };

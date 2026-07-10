@@ -75,10 +75,14 @@ describe('POST /v1/workout_sessions', () => {
 
 describe('GET /v1/workout_sessions/me', () => {
   it('returns 200 with session list when token is valid', async () => {
-    const res = await request(app).get('/v1/exercises').set('Authorization', `Bearer ${token}`);
+    const res = await request(app)
+      .get('/v1/workout_sessions/me')
+      .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.sessions.length).toBe(1);
+    expect(res.body.sessions[0].reps_completed).toBe(10);
+    expect(res.body.stats.session_count).toBe(1);
   });
 
   it('returns 401 when no token is provided', async () => {
