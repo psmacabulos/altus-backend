@@ -45,7 +45,7 @@ Authenticated user
   └─ Achievements checked automatically after save
 
 Profile page
-  └─ GET /workout_sessions/me → exercise history
+  └─ GET /workout_sessions/me → exercise history + lifetime stats
   └─ GET /users/me/achievements → unlocked achievements
 
 Leaderboard (public)
@@ -256,7 +256,7 @@ Called once after login. The frontend stores the result in React context — eac
 | Method | Endpoint | Auth Required | Description |
 |---|---|---|---|
 | POST | `/workout_sessions` | Yes 🔒 | Save a completed workout session |
-| GET | `/workout_sessions/me` | Yes 🔒 | Retrieve the authenticated user's session history |
+| GET | `/workout_sessions/me` | Yes 🔒 | Retrieve the authenticated user's session history and lifetime stats |
 
 ---
 
@@ -316,23 +316,34 @@ This prevents score manipulation — a tampered request body cannot change the s
 
 ### GET `/workout_sessions/me`
 
-🔒 Requires valid JWT. Returns the authenticated user's full workout history.
+🔒 Requires valid JWT. Returns the authenticated user's full workout history, plus their lifetime stats — so the frontend doesn't need to re-aggregate the session list to show totals.
 
 **Response — `200 OK`**
 ```json
-[
-  {
-    "id": "uuid",
-    "exercise": "Squats",
-    "difficulty": "Medium",
-    "reps_completed": 15,
-    "score": 630,
-    "duration_seconds": 60,
-    "calories_burned": 13.44,
-    "completed_at": "2025-06-01T10:30:00.000Z"
+{
+  "sessions": [
+    {
+      "id": "uuid",
+      "exercise": "Squats",
+      "difficulty": "Medium",
+      "reps_completed": 15,
+      "score": 630,
+      "duration_seconds": 60,
+      "calories_burned": 13.44,
+      "completed_at": "2025-06-01T10:30:00.000Z"
+    }
+  ],
+  "stats": {
+    "session_count": 1,
+    "total_reps": 15,
+    "total_calories": 13.44
   }
-]
+}
 ```
+
+> `stats` reuses the same aggregate the backend already computes internally to evaluate achievements after each save (see `POST /workout_sessions`) — no new aggregation logic, just exposing it here too. `sessions` is `[]` and `stats` totals are `0` for a user with no workout history yet — never omitted or `null`.
+
+**Breaking change:** this endpoint previously returned a bare array of sessions. Frontend calls to `GET /workout_sessions/me` must be updated to read `response.sessions` instead of `response`.
 
 ---
 

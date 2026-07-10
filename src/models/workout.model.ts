@@ -88,9 +88,9 @@ const findDifficultyById = async (id: string): Promise<CalculationRequirement | 
 const getAllUserStats = async (userId: string): Promise<Stats> => {
   const result = await pool.query(
     `SELECT
-  COUNT(*) AS session_count,
-  COALESCE(SUM(reps_completed), 0) AS total_reps,
-  COALESCE(SUM(calories_burned), 0) AS total_calories
+  COUNT(*)::int AS session_count,
+  COALESCE(SUM(reps_completed), 0)::int AS total_reps,
+  COALESCE(SUM(calories_burned), 0)::float AS total_calories
   FROM workout_sessions
   WHERE user_id = $1`,
     [userId]
