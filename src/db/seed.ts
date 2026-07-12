@@ -77,7 +77,10 @@ const seedAchievements = async (): Promise<void> => {
     await pool.query(
       `INSERT INTO achievements (name, description, requirement_type, requirement_value)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (name) DO NOTHING`,
+       ON CONFLICT (name) DO UPDATE
+       SET description = EXCLUDED.description,
+       requirement_type = EXCLUDED.requirement_type,
+       requirement_value = EXCLUDED.requirement_value`,
       [name, description, requirement_type, requirement_value]
     );
   }
