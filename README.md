@@ -190,7 +190,7 @@ Returns:
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | POST | `/workout_sessions` | 🔒 | Save a completed session |
-| GET | `/workout_sessions/me` | 🔒 | Current user's session history |
+| GET | `/workout_sessions/me` | 🔒 | Current user's session history + lifetime stats |
 
 **Save a session**
 
@@ -222,18 +222,25 @@ curl -i http://localhost:5600/v1/workout_sessions/me \
 Returns:
 
 ```json
-[
-  {
-    "id": "uuid",
-    "exercise": "Squats",
-    "difficulty": "Medium",
-    "reps_completed": 15,
-    "score": 630,
-    "duration_seconds": 60,
-    "calories_burned": 13.44,
-    "completed_at": "2025-06-01T10:30:00.000Z"
+{
+  "sessions": [
+    {
+      "id": "uuid",
+      "exercise": "Squats",
+      "difficulty": "Medium",
+      "reps_completed": 15,
+      "score": 630,
+      "duration_seconds": 60,
+      "calories_burned": 13.44,
+      "completed_at": "2025-06-01T10:30:00.000Z"
+    }
+  ],
+  "stats": {
+    "session_count": 1,
+    "total_reps": 15,
+    "total_calories": 13.44
   }
-]
+}
 ```
 
 ---

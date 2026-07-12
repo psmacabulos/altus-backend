@@ -271,9 +271,9 @@ curl -i -X POST http://localhost:5600/v1/workout_sessions \
 
 ### 3.4 Get my workout history — happy path
 
-**What it tests:** An authenticated user retrieves their full workout history. Run this after 3.1 so there is at least one session to return.  
+**What it tests:** An authenticated user retrieves their full workout history plus lifetime stats. Run this after 3.1 so there is at least one session to return.  
 **Expected status:** `200 OK`  
-**Expected body:** An array of session objects — each with `id`, `exercise`, `difficulty`, `reps_completed`, `score`, `duration_seconds`, `calories_burned`, `completed_at`
+**Expected body:** `{ sessions, stats }` — `sessions` is an array of session objects (`id`, `exercise`, `difficulty`, `reps_completed`, `score`, `duration_seconds`, `calories_burned`, `completed_at`); `stats` is `{ session_count, total_reps, total_calories }`, the same aggregate used internally to evaluate achievements (Phase 10)
 
 ```bash
 curl -i http://localhost:5600/v1/workout_sessions/me \

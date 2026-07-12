@@ -328,6 +328,7 @@ GET /v1/exercises
 - [x] Mount in `src/app.ts`
 - [x] Automated tests: 14 tests across auth, exercises, and workout sessions — all green
 - [x] Jest + Supertest setup — `jest.config.ts`, app/server split (`src/app.ts`)
+- [x] Post-Phase-10 revision (`feat/workout-history-stats`): `GET /v1/workout_sessions/me` now returns `{ sessions, stats }` instead of a bare array — `stats` reuses `getAllUserStats()` (Phase 10) so the frontend doesn't need to re-aggregate the session list for profile-page totals. Fixed `session_count`/`total_reps`/`total_calories` coming back as strings from Postgres by casting in SQL (`::int`, `::float`).
 
 ```
 POST /v1/workout_sessions
