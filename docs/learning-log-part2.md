@@ -77,6 +77,30 @@ Same database, two different hostnames — the difference is *where the connecti
 
 ---
 
+### `ts-node-dev --respawn` can silently miss an edit inside Docker on Windows — restart, don't assume
+
+Editing a `.ts` file with the `app` container already running normally triggers `ts-node-dev --respawn` to detect the change and restart automatically — no manual action needed, that's the whole point of `--respawn`. But on Windows, Docker Desktop's bind mount (`./src:/app/src` in [docker-compose.yml](../docker-compose.yml)) doesn't always deliver native filesystem change events from the Windows host into the Linux container's watcher. When that happens, the edit is real on disk, `docker compose logs app` still shows the *original* startup timestamp with no `Restarting:` message, and the running server keeps serving the old compiled behavior — with no error, no warning, nothing to indicate it's stale.
+
+This surfaced concretely: fixing a bug in `user.model.ts`, confirming the file on disk had the fix (`grep` showed it), then hitting the live endpoint and getting the *old*, broken response back — twice. The giveaway was checking `docker compose logs app --tail 10` and seeing only the one startup block from container launch, no second one from a respawn.
+
+**The fix:** `docker compose restart app` (not a rebuild — no new dependency, just forces the process to reload the current files). After restarting, the log shows a **second** `ts-node-dev ver...` startup block with a new timestamp — that second block is the proof the code actually changed, not just guessing that a plain restart worked.
+
+**The habit this creates:** after any `.ts` edit intended to fix live-tested behavior, check the container logs for a fresh restart timestamp before re-testing — don't assume `--respawn` caught it, especially on Windows.
+
+### A host-side `npm install` doesn't reach the running container — `node_modules` is baked into the image, not bind-mounted
+
+[docker-compose.yml](../docker-compose.yml) only bind-mounts `./src:/app/src` into the `app` container — nothing else. `node_modules` comes from the `Dockerfile`'s `RUN npm ci` ([Dockerfile:7](../Dockerfile#L7)), which runs once at **image build time**, baking in whatever `package-lock.json` existed at that moment.
+
+Running `npm install <package>` on the host updates the host's `package.json`, `package-lock.json`, and `node_modules` — but the already-running container's image was built before that install happened, and only `src/` is mounted live, so the container never even re-reads the new `package.json`. The container crashes with `Cannot find module '<package>'` even though it's clearly sitting in the host's `node_modules`.
+
+**The fix:** rebuild the image so `npm ci` reruns against the updated lockfile:
+```bash
+docker compose up --build -d
+```
+A plain `docker compose restart` or `docker compose up -d` (without `--build`) reuses the existing image layers and will NOT pick up the new dependency — Docker only reruns `npm ci` when the `COPY package*.json ./` step's input actually changed, which `--build` is what forces it to check.
+
+---
+
 ## npm vs npx
 
 ### What is the difference between `npm` and `npx`?
@@ -606,6 +630,25 @@ More generally: a **collection** endpoint ("how many achievements does this user
 
 ---
 
+## Security
+
+### The destructure-and-discard pattern for stripping a sensitive field before it leaves the service layer
+
+`auth.service.ts`'s `login()`:
+
+```ts
+const { password_hash: _password_hash, ...safeUser } = user;
+return { token, user: safeUser };
+```
+
+This line isn't redundant just because the function's declared return type promises `SafeUser` (`Omit<User, 'password_hash'>`). `findByEmail` ([user.model.ts:37-39](../src/models/user.model.ts#L37-L39)) runs a `SELECT` that includes `password_hash`, so the actual `user` object at runtime still carries the hash — TypeScript's return-type annotation is compile-time only (see the `keyof`/`as` lesson above) and does nothing to remove a field from the real object at runtime.
+
+The destructure is what does the removal: `password_hash` is pulled out into `_password_hash` (renamed with a leading underscore purely to satisfy the linter's unused-variable rule, then discarded), and everything else is spread into `safeUser`, which is what actually gets sent to `res.json()`. Deleting this line and returning `user` directly would ship the real password hash to any client that logs in — the type system would stay silent about it, because nothing at compile time checks that the runtime object matches the declared type.
+
+**Why `register()` doesn't need the same line:** `createUser`'s return type is already `SafeUser` because its underlying `INSERT ... RETURNING` never selects `password_hash` in the first place ([user.model.ts:26](../src/models/user.model.ts#L26)) — there's no hash on the object to strip. The rule isn't "always destructure before returning a user object"; it's "strip a sensitive column at the point where it was actually queried, if the query pulled it in."
+
+---
+
 ## SQL
 
 ### `INSERT` clause order: `VALUES` → `ON CONFLICT` → `RETURNING`
@@ -744,3 +787,27 @@ git push origin dev  # only once confident — this is the actual "finalize to o
 ```
 
 For zero risk to the real `dev` branch even during testing (not just before pushing), do the same steps on a disposable branch (`git checkout -b test-merge dev`) instead — delete it with `git branch -D test-merge` if the merge fails, or repeat the merge for real on `dev` once proven.
+
+---
+
+## Google OAuth
+
+### An ID token's signature check and its audience check are two separate guarantees
+
+`verifyIdToken()` in [google.service.ts](../src/services/google.service.ts) does two independent things at once: confirms the token was genuinely signed by Google (not forged), and confirms it was issued *for this app specifically* — checked against `GOOGLE_CLIENT_ID` as the "audience." Skipping the audience check would accept a real, validly-signed Google token that was actually issued to a completely different application — anyone holding a Google ID token for any app that uses Google Sign-In could replay it against this API. "Is this real?" and "is this real, for me?" are different questions, and both need answering.
+
+### Why the account-linking branch checks `email_verified` before trusting a match
+
+`loginWithGoogle()` ([auth.service.ts:85](../src/services/auth.service.ts#L85)) auto-links a Google sign-in to an existing password account purely by matching email — no further proof is asked of the user. That's only safe because `payload.email_verified` confirms Google itself is vouching that this person controls that inbox. Without that check, an unverified email claim would let anyone type an existing user's email into their Google profile and walk straight into that user's account by matching on an address they don't actually control.
+
+### Check-then-insert has a race condition; catch-and-retry doesn't
+
+Generating a username for a brand-new Google signup could have been written as "check if the derived username is taken, then insert if it's free." That has a race condition: two near-simultaneous signups deriving the same base username could both pass the "is it taken" check before either has inserted, and both then attempt the same insert. The actual code instead attempts the `INSERT` directly and only reacts if it fails with Postgres's `23505` unique-violation code on `users_username_key`, retrying with a numeric suffix — the same reflex `register()` already uses for duplicate emails ([auth.service.ts:48](../src/services/auth.service.ts#L48)). The database's `UNIQUE` constraint is the actual source of truth here, not a check run moments earlier in application code.
+
+### Circular imports between two service files — works, but only because nothing runs at module load time
+
+`google.service.ts` imports `AppError` from `auth.service.ts` (to throw it); `auth.service.ts` imports `verifyGoogleToken` from `google.service.ts` (to call it) — each file imports from the other. This doesn't error, because both imports are only referenced *inside function bodies*, which don't execute until something calls them — by the time either function runs, both modules have already finished loading. It would break if either file used the other's import at the top level (e.g. a module-level `const` depending on it), because Node evaluates circularly-imported modules in whatever order they're first required, and one side's export can still be `undefined` at that point. The real fix — moving `AppError` out to its own file with no cross-imports — is already flagged as Phase 12 cleanup in `backend-roadmap.md`; this circular edge is a direct consequence of not having done that yet.
+
+### A login endpoint that might create a row still returns `200`, not a conditional `201`
+
+`POST /auth/google` always responds `200`, even on the branch that inserts a brand-new user row. `201 Created` is reserved for endpoints where creation is the client's explicit intent (`POST /auth/register`). From the frontend's perspective, clicking "Sign in with Google" is always the same action — authenticate — regardless of whether a row happened to get created behind the scenes on that particular call. Branching the status code on an internal implementation detail (which of `loginWithGoogle`'s three branches fired) would give the frontend nothing useful to react to, since it has no way to know in advance which branch will apply.
