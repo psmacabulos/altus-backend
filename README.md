@@ -39,6 +39,7 @@ Required variables in `.env`:
 | `DB_USER` | Database user |
 | `DB_PASSWORD` | Database password |
 | `JWT_SECRET` | Secret used to sign JWT tokens — use a strong random string |
+| `GOOGLE_CLIENT_ID` | OAuth 2.0 Client ID from Google Cloud Console — required for `/auth/google` token verification |
 | `ADMIN_EMAIL` | Seed admin account email |
 | `ADMIN_PASSWORD` | Seed admin account password |
 
@@ -115,7 +116,7 @@ Error responses follow this shape:
 |---|---|---|---|
 | POST | `/auth/register` | No | Create account — returns JWT + user |
 | POST | `/auth/login` | No | Login — returns JWT + user |
-| POST | `/auth/google` | No | Google OAuth login/register *(deferred)* |
+| POST | `/auth/google` | No | Google OAuth login/register — returns JWT + user |
 
 **Register**
 
@@ -143,6 +144,33 @@ Both return:
     "username": "player1",
     "email": "player1@test.com",
     "google_id": null,
+    "role": "user",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+```
+
+**Google Sign-In**
+
+The frontend obtains a Google ID token via the Google Sign-In button and sends it as `id_token`. The backend verifies it against Google, then either logs in an already-linked user, auto-links a Google sign-in to an existing password account with a matching (Google-verified) email, or creates a new account — always responding `200` regardless of which of the three happened.
+
+```bash
+curl -i -X POST http://localhost:5600/v1/auth/google \
+  -H "Content-Type: application/json" \
+  -d "{\"id_token\":\"<google-id-token>\"}"
+```
+
+Returns the same shape as register/login — a new account gets `password_hash`-free fields with `google_id` set instead:
+
+```json
+{
+  "token": "<jwt>",
+  "user": {
+    "id": "uuid",
+    "username": "player1",
+    "email": "player1@gmail.com",
+    "google_id": "104857392018475629301",
     "role": "user",
     "created_at": "...",
     "updated_at": "..."
@@ -245,6 +273,35 @@ Returns:
 
 ---
 
+### Achievements
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/users/me/achievements` | 🔒 | Unlocked achievements |
+
+Achievements unlock automatically inside `POST /workout_sessions` (see `new_achievements` above) — this endpoint is a pure read of what's already unlocked, never `null`, `[]` when there are none yet.
+
+```bash
+curl -i http://localhost:5600/v1/users/me/achievements \
+  -H "Authorization: Bearer <token>"
+```
+
+Returns:
+
+```json
+[
+  {
+    "id": "uuid",
+    "name": "First Workout",
+    "description": "Complete your first workout",
+    "badge_image": null,
+    "unlocked_at": "2025-06-01T10:30:00.000Z"
+  }
+]
+```
+
+---
+
 ### Users *(planned)*
 
 | Method | Endpoint | Auth | Description |
@@ -253,7 +310,6 @@ Returns:
 | GET | `/users/:id` | No | Public profile |
 | PUT | `/users/me` | 🔒 | Update profile |
 | GET | `/users/me/stats` | 🔒 | Workout statistics |
-| GET | `/users/me/achievements` | 🔒 | Unlocked achievements |
 
 ---
 
@@ -289,7 +345,7 @@ src/
   middleware/   Auth middleware (requireAuth)
   models/       SQL query functions
   routes/       URL → controller mappings
-  services/     Business logic (register, login, JWT)
+  services/     Business logic (register, login, Google OAuth, JWT)
   types/        TypeScript global augmentations
   app.ts        Express app (middleware + routes)
   index.ts      Server entry point (app.listen only)

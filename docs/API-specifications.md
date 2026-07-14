@@ -97,7 +97,7 @@ The HTTP status code is the machine-readable signal — `409` means conflict, `4
 |---|---|---|---|
 | POST | `/auth/register` | No | Create account (email + password) |
 | POST | `/auth/login` | No | Login (email + password) |
-| POST | `/auth/google` | No | Login or register via Google OAuth *(Phase 7b — deferred)* |
+| POST | `/auth/google` | No | Login or register via Google OAuth |
 
 ---
 
@@ -181,7 +181,13 @@ Creates a new account. Returns a JWT immediately — no separate login step need
 
 ### POST `/auth/google`
 
-The frontend obtains a Google ID token using the Google Sign-In button. It sends that token here — the backend verifies it with Google's API and either creates a new account or logs in the existing one.
+The frontend obtains a Google ID token via the Google Sign-In button and sends it here. The backend verifies the token's signature and audience against Google's public keys, then resolves the signed-in user by one of three paths — in this order:
+
+1. **Already linked** — a user row's `google_id` already matches → log them in, no write.
+2. **Same email, first Google sign-in** — no `google_id` match, but an existing password account shares this (Google-verified) email → the account is auto-linked (`google_id` is attached to the existing row) and that user is logged in.
+3. **New player** — no match either way → a new account is created with `google_id` set and `password_hash` left `null`. The username is derived from the email's local part (the text before `@`), deduplicated with a numeric suffix if already taken.
+
+Always returns `200`, even when path 3 creates a new row — from the client's side this is always "authenticate," never an explicit "create" action, so the response shape stays identical to `POST /auth/login` regardless of which path fired.
 
 **Request Body**
 
@@ -196,7 +202,7 @@ The frontend obtains a Google ID token using the Google Sign-In button. It sends
 }
 ```
 
-**Response — `200 OK` (existing user) or `201 Created` (new user)**
+**Response — `200 OK`** (identical shape whether the user already existed or was just created)
 ```json
 {
   "token": "<jwt_token>",
@@ -204,7 +210,7 @@ The frontend obtains a Google ID token using the Google Sign-In button. It sends
     "id": "uuid",
     "username": "player1",
     "email": "player@example.com",
-    "google_id": "google-oauth2|123456789",
+    "google_id": "104857392018475629301",
     "role": "user",
     "created_at": "2025-01-01T00:00:00.000Z",
     "updated_at": "2025-01-01T00:00:00.000Z"
@@ -212,7 +218,9 @@ The frontend obtains a Google ID token using the Google Sign-In button. It sends
 }
 ```
 
-**Errors:** `400` missing id_token — `401` invalid Google token (verification with Google API failed) — `409` email already registered with email/password — `500` internal server error
+**Errors:** `400` missing id_token — `401` invalid Google token (bad signature, expired, or wrong audience) — `401` Google account email not verified — `500` internal server error
+
+A password account signing in with Google for the first time is **linked automatically, not rejected** — there is no `409` case here, unlike `/auth/register`'s duplicate-email conflict. Once linked, that user can log in with either method going forward.
 
 ---
 

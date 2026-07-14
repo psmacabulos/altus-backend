@@ -7,13 +7,13 @@ This is a living document — update it as the project evolves.
 
 ## 🎯 Current Target — Phase 11: Leaderboard
 
-Phase 10 (Achievement System) is complete — model, service, controller, routes, and tests all passing. Phase 11 is the active focus.
+Phase 7b (Google OAuth, previously deferred) is now complete — verification, account auto-linking, and username dedupe all working. Phase 11 resumes as the active focus.
 
 ```
 Phases 1–6   ✅ Done     Setup, server, Docker, CI/CD, database, seed data
 Heroku       ✅ Live     App deployed, migrations ran, database seeded
 Phase 7a     ✅ Done     Email + password auth — register, login, JWT middleware
-Phase 7b     ⏸ Deferred  Google OAuth (skipped for now)
+Phase 7b     ✅ Done     Google OAuth
 Phase 8      ✅ Done     Exercises Endpoint
 Phase 9      ✅ Done     Workout Sessions + Automated Integration Tests
 Phase 10     ✅ Done     Achievement System
@@ -74,7 +74,7 @@ Phase 4  ████████████████████  ✅ Done 
 Phase 5  ████████████████████  ✅ Done          Schema & Migrations
 Phase 6  ████████████████████  ✅ Done          Seed Data
 Phase 7a ████████████████████  ✅ Done          Auth — Email + Password
-Phase 7b ████████████████████  ⏸ Deferred       Auth — Google OAuth
+Phase 7b ████████████████████  ✅ Done          Auth — Google OAuth
 Phase 8  ████████████████████  ✅ Done          Exercises Endpoint
 Phase 9  ████████████████████  ✅ Done          Workout Sessions + Automated Tests
 Phase 10 ████████████████████  ✅ Done          Achievement System
@@ -252,6 +252,7 @@ Every endpoint in this phase follows the **Route → Controller → Service → 
 - [x] Test login: `POST /v1/auth/login` → `200 { token, user }`
 - [x] Test duplicate email → `409`, duplicate username → `409`
 - [x] Test wrong password → `401`, unknown email → `401`
+- [x] `login()`'s destructure-and-discard of `password_hash` before returning `user` — see "Security" section in `learning-log-part2.md` for why this line is load-bearing, not redundant
 
 ```
 POST /v1/auth/register
@@ -268,12 +269,23 @@ requireAuth middleware (on every protected route):
   → next()
 ```
 
-### 7b — Google OAuth
+### 7b — Google OAuth  ✅ Done
 
-- [ ] `src/services/google.service.ts` — `verifyGoogleToken()` using `google-auth-library`
-- [ ] Add `handleGoogleAuth()` to `auth.controller.ts`
-- [ ] Add `POST /v1/auth/google` to `auth.routes.ts`
-- [ ] Test: send a real Google ID token → receive Altus JWT
+**Design decisions:**
+- A Google sign-in matching an existing password account's (Google-verified) email is **auto-linked**, not rejected — that user can then log in either way
+- New Google signups get a username derived from the email's local part, deduplicated with a numeric suffix on collision (retry-on-`23505`, not check-then-insert — see `learning-log-part2.md`)
+- Response is always `200`, never a conditional `201` — see `learning-log-part2.md` for why
+
+- [x] Google Cloud Console — project, OAuth consent screen, Web application OAuth Client ID
+- [x] `GOOGLE_CLIENT_ID` added to `.env` and `.env.example`
+- [x] `npm install google-auth-library`
+- [x] `src/services/google.service.ts` — `verifyGoogleToken()` using `google-auth-library`'s `OAuth2Client`
+- [x] `src/models/user.model.ts` — `findByGoogleId()`, `linkGoogleId()`, `createMemberFromGoogle()`
+- [x] `src/services/auth.service.ts` — `loginWithGoogle()` (three-branch resolution: already-linked / auto-link / create)
+- [x] `handleGoogleLogin()` added to `auth.controller.ts`
+- [x] `POST /v1/auth/google` added to `auth.routes.ts`
+- [x] Request field is `id_token` (snake_case), matching the API's stated naming convention
+- [x] Full spec: `docs/API-specifications.md` → Authentication API → `POST /auth/google`
 
 ### 🤖 CI Checkpoint — Upgrade to Level 3 after this phase
 
