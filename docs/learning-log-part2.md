@@ -745,6 +745,22 @@ Use `// TODO` for planning (orange stands out while you work). Use `// !` when a
 
 ---
 
+## Deployment & Environment Config
+
+### Local `.env` and Heroku's config vars are *supposed* to hold different values — they're credentials for two separate physical databases
+
+Comparing local `.env` (`DB_HOST=db`, a password you picked yourself) against `heroku config`'s values and finding them different isn't a sign of a bug — it's the expected, correct state. `.env` is gitignored specifically so each environment can hold its own separate secrets: local `.env` points at the Postgres container `docker-compose.yml` starts on your own machine; Heroku's config vars point at the actual production database — a completely different, physical instance, with credentials Heroku itself generated, that only Heroku's app and whoever has the credentials can reach. "Different values" is the point of having separate environments, not evidence they're out of sync.
+
+### `db.ts` reads discrete `DB_HOST`/`DB_USER`/etc, but the Heroku Postgres add-on only ever provides a single `DATABASE_URL` — someone has to keep them in sync by hand
+
+Heroku's Postgres add-on automatically injects one config var, `DATABASE_URL` (`postgres://user:password@host:port/database`), whenever the add-on is provisioned or its credentials change. It does **not** automatically also populate separate `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` vars — those only exist on this app because [db.ts](../src/config/db.ts) is written to read discrete fields (`pool = new Pool({ host: process.env.DB_HOST, ... })`) rather than parsing one connection string, so at setup time someone had to manually split `DATABASE_URL` into those five separate config vars.
+
+This means the two are **not automatically kept in sync going forward**. If Heroku Postgres credentials ever rotate (`heroku pg:credentials:rotate`, a plan change, anything that changes `DATABASE_URL`), the discrete `DB_*` vars would need to be updated by hand to match — nothing does that automatically, and the app would keep trying the old, now-invalid credentials with no warning until a connection actually fails.
+
+**How to check they're actually in sync**, rather than assuming: `heroku config -a <app-name>` lists every config var at once — compare `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` line-by-line against the pieces of `DATABASE_URL` shown in the same output. Confirmed on this app: they matched exactly, meaning production has been configured correctly since setup, with no drift.
+
+---
+
 ## Git Workflow
 
 ### Local branches vs remote-tracking branches — why `dev` and `origin/dev` can point at different commits
