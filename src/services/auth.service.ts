@@ -1,7 +1,15 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { createUser, findByEmail, SafeUser } from '../models/user.model';
+import {
+  createUser,
+  findByEmail,
+  SafeUser,
+  createMemberFromGoogle,
+  findByGoogleId,
+  linkGoogleId,
+} from '../models/user.model';
 import { DatabaseError } from 'pg';
+import { verifyGoogleToken } from './google.service';
 
 // Extend Error to carry Status Code for the controller to read
 class AppError extends Error {
@@ -73,3 +81,47 @@ const login = async (
 };
 
 export { login, register, generateJWT, AppError };
+
+const loginWithGoogle = async (id_token: string): Promise<{ token: string; user: SafeUser }> => {
+  const { googleId, email } = await verifyGoogleToken(id_token);
+
+  // Branch 1 - already linked. Nothing to write, just load and sign
+  let user: SafeUser | null = await findByGoogleId(googleId);
+
+  if (!user) {
+    const existing = await findByEmail(email);
+
+    if (existing) {
+      // Branch 2 - same email, first time using Google, Auto link
+      user = await linkGoogleId(existing.id, googleId);
+    } else {
+      // never seen this person. Derive a username from the email and try to create
+      // an account, retrying on collission
+      const base = email.split('@')[0].slice(0, 50);
+      let candidate = base;
+      let attempt = 0;
+      const MAX_ATTEMPTS = 5;
+
+      while (true) {
+        try {
+          user = await createMemberFromGoogle(candidate, email, googleId);
+          break;
+        } catch (error: unknown) {
+          attempt++;
+          const isUsernameCollision =
+            error instanceof DatabaseError &&
+            error.code === '23505' &&
+            error.constraint === 'users_username_key';
+          if (!isUsernameCollision || attempt >= MAX_ATTEMPTS) {
+            throw error;
+          }
+          candidate = `${base}${attempt}`.slice(0, 50);
+        }
+      }
+    }
+  }
+  const token = generateJWT(user.id);
+  return { token, user };
+};
+
+export { loginWithGoogle };

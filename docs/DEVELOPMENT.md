@@ -70,9 +70,9 @@ src/__tests__/
 
 ## Current state
 - Phases 1–9 complete and merged to `main` — deployed to Heroku
-- Phase 7b (Google OAuth) deferred
+- Phase 7b (Google OAuth) complete — not yet merged to `dev`/`main`
 - Phase 10 (Achievement System) code-complete, all tests passing on `feat/achievements` — not yet merged to `dev`/`main`
-- Automated tests written for all current endpoints (auth, exercises, workout sessions, achievements)
+- Automated tests written for all current endpoints (auth, exercises, workout sessions, achievements) — Google OAuth not yet covered by automated tests
 - **Next: Phase 11 — Leaderboard**
 
 ## Branch strategy

@@ -1,4 +1,4 @@
-import { login, register, AppError } from '../services/auth.service';
+import { login, register, AppError, loginWithGoogle } from '../services/auth.service';
 import { Response, Request } from 'express';
 
 const handleError = (error: unknown, res: Response): void => {
@@ -29,4 +29,15 @@ const handleLogin = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-export { handleRegister, handleLogin };
+const handleGoogleLogin = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id_token } = req.body;
+    const result = await loginWithGoogle(id_token);
+
+    res.status(200).json(result);
+  } catch (error) {
+    handleError(error, res);
+  }
+};
+
+export { handleRegister, handleLogin, handleGoogleLogin };
